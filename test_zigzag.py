@@ -4,6 +4,7 @@ from typing import List, Tuple, Optional
 import requests
 from io import BytesIO
 import sys
+import argparse
 
 # 檢查依賴套件
 def check_dependencies():
@@ -31,28 +32,31 @@ class ZigZagMT4:
     根據Pine Script原始邏輯轉換而來
     
     參數:
-        depth: 回溯深度,尋找局部極值的最小窗口
-        deviation: 價格變動閾值(百分比),必須超過此值才確認新轉折點
-        backstep: 連續極值點之間的最小K棒間隔
+        depth: 回溯深度,尋找局部極值的最小窗口 (建議: 10-15為15m圖)
+        deviation: 價格變動閾值(百分比),必須超過此值才確認新轉折點 (建議: 0.8-1.5%為15m圖)
+        backstep: 連續極值點之間的最小K棒間隔 (建議: 2-3為15m圖)
     """
     
-    def __init__(self, depth: int = 12, deviation: float = 5.0, backstep: int = 3):
+    def __init__(self, depth: int = 12, deviation: float = 1.0, backstep: int = 3):
         self.depth = depth
         self.deviation = deviation / 100.0  # 轉換為小數
         self.backstep = backstep
-        print(f"\nZigZag參數: Depth={depth}, Deviation={deviation}%, Backstep={backstep}")
         
-    def calculate_zigzag(self, data: pd.DataFrame) -> pd.DataFrame:
+    def calculate_zigzag(self, data: pd.DataFrame, verbose: bool = True) -> pd.DataFrame:
         """
         計算ZigZag線和標記HH/HL/LL/LH
         使用MT4風格的算法
         
         Args:
             data: 包含 OHLC 數據的 DataFrame
+            verbose: 是否顯示詳細處理資訊
             
         Returns:
             包含ZigZag標記的DataFrame
         """
+        if verbose:
+            print(f"\nZigZag參數: Depth={self.depth}, Deviation={self.deviation*100}%, Backstep={self.backstep}")
+        
         df = data.copy()
         n = len(df)
         
@@ -64,7 +68,9 @@ class ZigZagMT4:
         swing_type = [''] * n
         
         # 第一步: 尋找所有局部高點和低點
-        print(f"步驟 1: 尋找局部極值 (depth={self.depth})...")
+        if verbose:
+            print(f"步驟 1: 尋找局部極值 (depth={self.depth})...")
+        
         for i in range(self.depth, n):
             # 尋找局部高點
             is_high = True
@@ -86,10 +92,13 @@ class ZigZagMT4:
         
         high_count = np.sum(~np.isnan(zigzag_high))
         low_count = np.sum(~np.isnan(zigzag_low))
-        print(f"  找到 {high_count} 個局部高點, {low_count} 個局部低點")
+        
+        if verbose:
+            print(f"  找到 {high_count} 個局部高點, {low_count} 個局部低點")
         
         # 第二步: 應用Deviation和Backstep篩選
-        print(f"\n步驟 2: 應用Deviation={self.deviation*100}%和Backstep={self.backstep}篩選...")
+        if verbose:
+            print(f"\n步驟 2: 應用Deviation={self.deviation*100}%和Backstep={self.backstep}篩選...")
         
         last_high_idx = -1
         last_low_idx = -1
@@ -168,10 +177,13 @@ class ZigZagMT4:
                                 last_low_price = zigzag_low[i]
                                 confirmed_lows.append((i, last_low_price))
         
-        print(f"  確認了 {len(confirmed_highs)} 個高點, {len(confirmed_lows)} 個低點")
+        if verbose:
+            print(f"  確認了 {len(confirmed_highs)} 個高點, {len(confirmed_lows)} 個低點")
         
         # 第三步: 合併和排序所有轉折點
-        print(f"\n步驟 3: 合併轉折點並標記HH/HL/LL/LH...")
+        if verbose:
+            print(f"\n步驟 3: 合併轉折點並標記HH/HL/LL/LH...")
+        
         all_pivots = []
         for idx, price in confirmed_highs:
             all_pivots.append((idx, price, 'HIGH'))
@@ -214,7 +226,8 @@ class ZigZagMT4:
         df['direction'] = direction
         df['swing_type'] = swing_type
         
-        print(f"  完成! 總計 {len(all_pivots)} 個轉折點")
+        if verbose:
+            print(f"  完成! 總計 {len(all_pivots)} 個轉折點")
         
         return df
 
@@ -242,46 +255,128 @@ def download_btc_data(url: str) -> pd.DataFrame:
         raise Exception(f"讀取Parquet檔案失敗: {str(e)}")
 
 
-def test_different_parameters(df_test: pd.DataFrame):
+def parse_arguments():
     """
-    測試不同的參數組合
+    解析命令列參數
+    """
+    parser = argparse.ArgumentParser(
+        description='ZigZag指標測試程式 - MT4風格實現',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+參數說明:
+  Depth:     尋找局部極值的回溯窗口大小 (較大值過濾更多小波動)
+  Deviation: 價格必須變動的最小百分比 (較大值只顯示重大趨勢)
+  Backstep:  連續轉折點的最小間隔K棒數 (防止過密集的信號)
+
+建議配置 (15分鐘圖):
+  標準:   --depth 12 --deviation 1.0 --backstep 3
+  敷感:   --depth 10 --deviation 0.8 --backstep 2
+  保守:   --depth 15 --deviation 1.5 --backstep 4
+
+範例:
+  python test_zigzag.py --depth 12 --deviation 1.0 --backstep 3
+  python test_zigzag.py --auto-tune  # 自動測試多種參數
+        """
+    )
+    
+    parser.add_argument('--depth', type=int, default=12,
+                        help='Depth參數 (預設: 12, 範圍: 5-30)')
+    parser.add_argument('--deviation', type=float, default=1.0,
+                        help='Deviation參數,百分比 (預設: 1.0, 範圍: 0.3-10.0)')
+    parser.add_argument('--backstep', type=int, default=3,
+                        help='Backstep參數 (預設: 3, 範圍: 2-10)')
+    parser.add_argument('--samples', type=int, default=1000,
+                        help='測試數據筆數 (預設: 1000)')
+    parser.add_argument('--auto-tune', action='store_true',
+                        help='自動測試多種參數組合')
+    parser.add_argument('--output', type=str, default='zigzag_result.csv',
+                        help='輸出檔案名稱 (預設: zigzag_result.csv)')
+    
+    return parser.parse_args()
+
+
+def test_single_config(df_test: pd.DataFrame, depth: int, deviation: float, backstep: int, verbose: bool = True):
+    """
+    測試單一參數配置
+    """
+    zigzag = ZigZagMT4(depth=depth, deviation=deviation, backstep=backstep)
+    result = zigzag.calculate_zigzag(df_test, verbose=verbose)
+    
+    zigzag_points = result[result['zigzag'].notna()]
+    hh = (result['swing_type'] == 'HH').sum()
+    hl = (result['swing_type'] == 'HL').sum()
+    lh = (result['swing_type'] == 'LH').sum()
+    ll = (result['swing_type'] == 'LL').sum()
+    
+    return {
+        'result': result,
+        'total_points': len(zigzag_points),
+        'HH': hh,
+        'HL': hl,
+        'LH': lh,
+        'LL': ll
+    }
+
+
+def auto_tune_parameters(df_test: pd.DataFrame):
+    """
+    自動測試多種參數組合
     """
     print("\n" + "="*60)
-    print("測試不同參數組合")
+    print("自動參數調整模式")
     print("="*60)
     
-    # 根據搜索結果,對於15分鐘圖表,建議使用更小的deviation
     test_configs = [
-        {"depth": 12, "deviation": 0.5, "backstep": 3},  # 極小 deviation
-        {"depth": 12, "deviation": 1.0, "backstep": 3},  # 小 deviation
-        {"depth": 12, "deviation": 2.0, "backstep": 3},  # 中等 deviation
-        {"depth": 10, "deviation": 1.0, "backstep": 2},  # 短周期配置
+        {"depth": 12, "deviation": 0.5, "backstep": 3, "name": "極敏感"},
+        {"depth": 12, "deviation": 0.8, "backstep": 3, "name": "敏感"},
+        {"depth": 12, "deviation": 1.0, "backstep": 3, "name": "標準"},
+        {"depth": 12, "deviation": 1.5, "backstep": 3, "name": "保守"},
+        {"depth": 10, "deviation": 0.8, "backstep": 2, "name": "短周期"},
     ]
     
     results = []
-    for config in test_configs:
-        print(f"\n{'='*60}")
-        zigzag = ZigZagMT4(**config)
-        result = zigzag.calculate_zigzag(df_test)
+    for i, config in enumerate(test_configs, 1):
+        name = config.pop('name')
+        print(f"\n[{i}/{len(test_configs)}] 測試 {name} 配置: {config}")
+        print("-" * 60)
         
-        zigzag_points = result[result['zigzag'].notna()]
-        hh = (result['swing_type'] == 'HH').sum()
-        hl = (result['swing_type'] == 'HL').sum()
-        lh = (result['swing_type'] == 'LH').sum()
-        ll = (result['swing_type'] == 'LL').sum()
+        result_data = test_single_config(df_test, verbose=True, **config)
+        config['name'] = name
         
         results.append({
             'config': config,
-            'total_points': len(zigzag_points),
-            'HH': hh,
-            'HL': hl,
-            'LH': lh,
-            'LL': ll
+            **result_data
         })
         
-        print(f"\n結果: {len(zigzag_points)} 個轉折點 (HH:{hh}, HL:{hl}, LH:{lh}, LL:{ll})")
+        print(f"\n結果: {result_data['total_points']} 個轉折點")
+        print(f"Swing分佈: HH={result_data['HH']}, HL={result_data['HL']}, LH={result_data['LH']}, LL={result_data['LL']}")
     
-    return results
+    # 選擇最佳配置
+    print(f"\n\n{'='*60}")
+    print("參數分析結果")
+    print("="*60)
+    
+    print(f"\n{'\u914d置':<12} {'Depth':<8} {'Dev%':<8} {'Back':<6} {'\u8f49\u6298\u9ede':<8} {'HH':<5} {'HL':<5} {'LH':<5} {'LL':<5}")
+    print("-" * 60)
+    for r in results:
+        c = r['config']
+        print(f"{c['name']:<12} {c['depth']:<8} {c['deviation']:<8.1f} {c['backstep']:<6} {r['total_points']:<8} {r['HH']:<5} {r['HL']:<5} {r['LH']:<5} {r['LL']:<5}")
+    
+    # 選擇轉折點數量在理想範圍的
+    best = None
+    for r in results:
+        if 20 <= r['total_points'] <= 50:
+            best = r
+            break
+    
+    if best is None:
+        best = min(results, key=lambda x: abs(x['total_points'] - 35))
+    
+    print(f"\n建議使用: {best['config']['name']} 配置")
+    print(f"  Depth={best['config']['depth']}, Deviation={best['config']['deviation']}%, Backstep={best['config']['backstep']}")
+    print(f"  轉折點數量: {best['total_points']}")
+    
+    return best
 
 
 def main():
@@ -290,6 +385,14 @@ def main():
     """
     # 檢查依賴
     check_dependencies()
+    
+    # 解析命令列參數
+    args = parse_arguments()
+    
+    # 顯示參數資訊
+    print("="*60)
+    print("ZigZag指標測試程式")
+    print("="*60)
     
     # 下載BTC 15m數據
     url = "https://huggingface.co/datasets/zongowo111/v2-crypto-ohlcv-data/resolve/main/klines/BTCUSDT/BTC_15m.parquet"
@@ -306,47 +409,43 @@ def main():
         if missing_cols:
             raise Exception(f"資料缺少必要欄位: {missing_cols}")
         
-        # 只取最近1000條數據進行測試
-        df_test = df.tail(1000).copy()
+        # 取指定數量的數據
+        df_test = df.tail(args.samples).copy()
         df_test = df_test.reset_index(drop=True)
         
         print(f"\n測試數據範圍: {len(df_test)} 條記錄")
         if 'timestamp' in df_test.columns:
-            print(f"時間範圏: {df_test['timestamp'].min()} 至 {df_test['timestamp'].max()}")
+            print(f"時間範圍: {df_test['timestamp'].min()} 至 {df_test['timestamp'].max()}")
         
-        # 測試不同參數
-        results = test_different_parameters(df_test)
-        
-        # 選擇最佳參數(轉折點數量在20-50之間的)
-        print(f"\n\n{'='*60}")
-        print("參數選擇建議")
-        print("="*60)
-        
-        best_config = None
-        for r in results:
-            if 20 <= r['total_points'] <= 50:
-                best_config = r
-                break
-        
-        if best_config is None:
-            # 如果沒有理想的,選擇轉折點最接近35個的
-            best_config = min(results, key=lambda x: abs(x['total_points'] - 35))
-        
-        print(f"\n建議使用配置: {best_config['config']}")
-        print(f"轉折點數量: {best_config['total_points']}")
-        print(f"Swing分佈: HH={best_config['HH']}, HL={best_config['HL']}, LH={best_config['LH']}, LL={best_config['LL']}")
-        
-        # 使用最佳參數重新計算並儲存
-        print(f"\n\n{'='*60}")
-        print("使用最佳參數生成最終結果")
-        print("="*60)
-        
-        final_zigzag = ZigZagMT4(**best_config['config'])
-        result = final_zigzag.calculate_zigzag(df_test)
+        # 根據模式執行
+        if args.auto_tune:
+            # 自動調整模式
+            best = auto_tune_parameters(df_test)
+            result = best['result']
+            config_info = f"Depth={best['config']['depth']}, Deviation={best['config']['deviation']}%, Backstep={best['config']['backstep']}"
+        else:
+            # 單一參數測試
+            print(f"\n使用指定參數: Depth={args.depth}, Deviation={args.deviation}%, Backstep={args.backstep}")
+            result_data = test_single_config(df_test, args.depth, args.deviation, args.backstep, verbose=True)
+            result = result_data['result']
+            config_info = f"Depth={args.depth}, Deviation={args.deviation}%, Backstep={args.backstep}"
+            
+            # 顯示統計
+            print(f"\n\n{'='*60}")
+            print("結果統計")
+            print("="*60)
+            print(f"轉折點總數: {result_data['total_points']}")
+            print(f"HH (更高高點): {result_data['HH']}")
+            print(f"HL (更高低點): {result_data['HL']}")
+            print(f"LH (更低高點): {result_data['LH']}")
+            print(f"LL (更低低點): {result_data['LL']}")
         
         # 顯示部分結果
         zigzag_points = result[result['zigzag'].notna()]
-        print(f"\n部分ZigZag點資訊 (前20個轉折點):")
+        print(f"\n\n{'='*60}")
+        print("部分ZigZag點資訊 (前20個轉折點)")
+        print("="*60)
+        
         display_cols = ['open', 'high', 'low', 'close', 'zigzag', 'direction', 'swing_type']
         if 'timestamp' in zigzag_points.columns:
             display_cols.insert(0, 'timestamp')
@@ -355,9 +454,11 @@ def main():
         print(zigzag_points[available_cols].head(20).to_string(index=False))
         
         # 儲存結果
-        output_file = 'zigzag_result.csv'
-        result.to_csv(output_file, index=False)
-        print(f"\n結果已儲存至: {output_file}")
+        result.to_csv(args.output, index=False)
+        print(f"\n\n{'='*60}")
+        print(f"結果已儲存至: {args.output}")
+        print(f"使用參數: {config_info}")
+        print("="*60)
         
     except Exception as e:
         print(f"\n錯誤: {str(e)}")
