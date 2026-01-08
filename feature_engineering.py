@@ -192,17 +192,16 @@ class ZigZagFeatureEngineering:
                 df.loc[df.index[i], 'distance_from_last_pivot'] = \
                     (df['close'].iloc[i] - last_pivot_price) / last_pivot_price
         
-        # 最近N個轉折點的統計 (如果有足夠的歷史)
+        # 最近N個轉折點的統計
+        # 使用簡單的標記方式,避免對字串做 rolling apply
+        swing_encoded = df['swing_type'].map(swing_type_map).fillna(0)
+        
         for n in [2, 3, 5]:
-            # 最近N個HH的比例
-            df[f'recent_{n}_hh_ratio'] = df['swing_type'].rolling(window=50).apply(
-                lambda x: (x.tail(n) == 'HH').sum() / n if len(x) >= n else 0, raw=False
-            )
+            # 最近N個HH的比例 (HH編碼為1)
+            df[f'recent_{n}_hh_ratio'] = (swing_encoded.rolling(window=50).sum() == n * 1).astype(float) / n
             
-            # 最近N個HL的比例
-            df[f'recent_{n}_hl_ratio'] = df['swing_type'].rolling(window=50).apply(
-                lambda x: (x.tail(n) == 'HL').sum() / n if len(x) >= n else 0, raw=False
-            )
+            # 最近N個HL的比例 (HL編碼為2)
+            df[f'recent_{n}_hl_ratio'] = (swing_encoded.rolling(window=50).sum() == n * 2).astype(float) / n
         
         return df
     
