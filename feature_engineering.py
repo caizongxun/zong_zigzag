@@ -306,10 +306,13 @@ def prepare_ml_dataset(df: pd.DataFrame, target_col: str = 'swing_type',
         print(f"\nSwing Type分佈:")
         print(df_pivots[target_col].value_counts())
     
-    # 分離特徵和標籤
-    exclude_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 
+    # 分離特徵和標籤 - 排除所有非數值和非特徵欄位
+    exclude_cols = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume', 
                     'zigzag', 'direction', 'swing_type', 'last_swing_type']
-    feature_cols = [col for col in df_pivots.columns if col not in exclude_cols]
+    
+    # 只保留數值類型的欄位
+    numeric_cols = df_pivots.select_dtypes(include=[np.number]).columns.tolist()
+    feature_cols = [col for col in numeric_cols if col not in exclude_cols]
     
     X = df_pivots[feature_cols].values
     y = df_pivots[target_col].values
