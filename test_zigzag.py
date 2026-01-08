@@ -5,6 +5,7 @@ import requests
 from io import BytesIO
 import sys
 import argparse
+import time
 
 # 檢查依賴套件
 def check_dependencies():
@@ -57,8 +58,12 @@ class ZigZagMT4:
         if verbose:
             print(f"\nZigZag參數: Depth={self.depth}, Deviation={self.deviation*100}%, Backstep={self.backstep}")
         
+        start_time = time.time()
         df = data.copy()
         n = len(df)
+        
+        if verbose:
+            print(f"處理數據量: {n:,} 條記錄")
         
         # 初始化結果陣列
         zigzag_high = np.full(n, np.nan)
@@ -69,9 +74,16 @@ class ZigZagMT4:
         
         # 第一步: 尋找所有局部高點和低點
         if verbose:
-            print(f"步驟 1: 尋找局部極值 (depth={self.depth})...")
+            print(f"\n步驟 1/3: 尋找局部極值 (depth={self.depth})...")
+        
+        step1_start = time.time()
         
         for i in range(self.depth, n):
+            # 每處理10000筆顯示進度
+            if verbose and i % 10000 == 0:
+                progress = (i / n) * 100
+                print(f"  進度: {progress:.1f}% ({i:,}/{n:,})")
+            
             # 尋找局部高點
             is_high = True
             for j in range(max(0, i - self.depth), i):
@@ -92,13 +104,17 @@ class ZigZagMT4:
         
         high_count = np.sum(~np.isnan(zigzag_high))
         low_count = np.sum(~np.isnan(zigzag_low))
+        step1_time = time.time() - step1_start
         
         if verbose:
-            print(f"  找到 {high_count} 個局部高點, {low_count} 個局部低點")
+            print(f"  完成! 找到 {high_count:,} 個局部高點, {low_count:,} 個局部低點")
+            print(f"  耗時: {step1_time:.2f} 秒")
         
         # 第二步: 應用Deviation和Backstep篩選
         if verbose:
-            print(f"\n步驟 2: 應用Deviation={self.deviation*100}%和Backstep={self.backstep}篩選...")
+            print(f"\n步驟 2/3: 應用Deviation={self.deviation*100}%和Backstep={self.backstep}篩選...")
+        
+        step2_start = time.time()
         
         last_high_idx = -1
         last_low_idx = -1
@@ -125,6 +141,11 @@ class ZigZagMT4:
         
         # 掃描所有點
         for i in range(n):
+            # 每處理20000筆顯示進度
+            if verbose and i % 20000 == 0 and i > 0:
+                progress = (i / n) * 100
+                print(f"  進度: {progress:.1f}% ({i:,}/{n:,})")
+            
             # 處理高點
             if not np.isnan(zigzag_high[i]):
                 if last_high_idx == -1:
@@ -177,12 +198,17 @@ class ZigZagMT4:
                                 last_low_price = zigzag_low[i]
                                 confirmed_lows.append((i, last_low_price))
         
+        step2_time = time.time() - step2_start
+        
         if verbose:
-            print(f"  確認了 {len(confirmed_highs)} 個高點, {len(confirmed_lows)} 個低點")
+            print(f"  完成! 確認了 {len(confirmed_highs):,} 個高點, {len(confirmed_lows):,} 個低點")
+            print(f"  耗時: {step2_time:.2f} 秒")
         
         # 第三步: 合併和排序所有轉折點
         if verbose:
-            print(f"\n步驟 3: 合併轉折點並標記HH/HL/LL/LH...")
+            print(f"\n步驟 3/3: 合併轉折點並標記HH/HL/LL/LH...")
+        
+        step3_start = time.time()
         
         all_pivots = []
         for idx, price in confirmed_highs:
@@ -226,8 +252,14 @@ class ZigZagMT4:
         df['direction'] = direction
         df['swing_type'] = swing_type
         
+        step3_time = time.time() - step3_start
+        total_time = time.time() - start_time
+        
         if verbose:
-            print(f"  完成! 總計 {len(all_pivots)} 個轉折點")
+            print(f"  完成! 總計 {len(all_pivots):,} 個轉折點")
+            print(f"  耗時: {step3_time:.2f} 秒")
+            print(f"\n總耗時: {total_time:.2f} 秒 ({total_time/60:.2f} 分鐘)")
+            print(f"平均處理速度: {n/total_time:,.0f} 筆/秒")
         
         return df
 
@@ -244,10 +276,10 @@ def download_btc_data(url: str) -> pd.DataFrame:
     """
     print(f"正在下載數據: {url}")
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, timeout=60)
         response.raise_for_status()
         df = pd.read_parquet(BytesIO(response.content))
-        print(f"數據下載成功: {len(df)} 條記錄")
+        print(f"數據下載成功: {len(df):,} 條記錄")
         return df
     except requests.exceptions.RequestException as e:
         raise Exception(f"下載失敗: {str(e)}")
@@ -274,8 +306,20 @@ def parse_arguments():
   保守:   --depth 15 --deviation 1.5 --backstep 4
 
 範例:
+  # 使用預設參數,測試1000筆資料
+  python test_zigzag.py
+  
+  # 自訂參數
   python test_zigzag.py --depth 12 --deviation 1.0 --backstep 3
-  python test_zigzag.py --auto-tune  # 自動測試多種參數
+  
+  # 使用所有資料 (約21萬筆)
+  python test_zigzag.py --all-data
+  
+  # 指定資料數量
+  python test_zigzag.py --samples 5000
+  
+  # 自動調整參數
+  python test_zigzag.py --auto-tune
         """
     )
     
@@ -287,8 +331,10 @@ def parse_arguments():
                         help='Backstep參數 (預設: 3, 範圍: 2-10)')
     parser.add_argument('--samples', type=int, default=1000,
                         help='測試數據筆數 (預設: 1000)')
+    parser.add_argument('--all-data', action='store_true',
+                        help='使用所有數據(約21萬筆),忽略--samples參數')
     parser.add_argument('--auto-tune', action='store_true',
-                        help='自動測試多種參數組合')
+                        help='自動測試多種參數組合 (仅在非--all-data模式下)')
     parser.add_argument('--output', type=str, default='zigzag_result.csv',
                         help='輸出檔案名稱 (預設: zigzag_result.csv)')
     
@@ -348,7 +394,7 @@ def auto_tune_parameters(df_test: pd.DataFrame):
             **result_data
         })
         
-        print(f"\n結果: {result_data['total_points']} 個轉折點")
+        print(f"\n結果: {result_data['total_points']:,} 個轉折點")
         print(f"Swing分佈: HH={result_data['HH']}, HL={result_data['HL']}, LH={result_data['LH']}, LL={result_data['LL']}")
     
     # 選擇最佳配置
@@ -356,11 +402,11 @@ def auto_tune_parameters(df_test: pd.DataFrame):
     print("參數分析結果")
     print("="*60)
     
-    print(f"\n{'\u914d置':<12} {'Depth':<8} {'Dev%':<8} {'Back':<6} {'\u8f49\u6298\u9ede':<8} {'HH':<5} {'HL':<5} {'LH':<5} {'LL':<5}")
-    print("-" * 60)
+    print(f"\n{'\u914d\u7f6e':<12} {'Depth':<8} {'Dev%':<8} {'Back':<6} {'\u8f49\u6298\u9ede':<10} {'HH':<5} {'HL':<5} {'LH':<5} {'LL':<5}")
+    print("-" * 70)
     for r in results:
         c = r['config']
-        print(f"{c['name']:<12} {c['depth']:<8} {c['deviation']:<8.1f} {c['backstep']:<6} {r['total_points']:<8} {r['HH']:<5} {r['HL']:<5} {r['LH']:<5} {r['LL']:<5}")
+        print(f"{c['name']:<12} {c['depth']:<8} {c['deviation']:<8.1f} {c['backstep']:<6} {r['total_points']:<10,} {r['HH']:<5} {r['HL']:<5} {r['LH']:<5} {r['LL']:<5}")
     
     # 選擇轉折點數量在理想範圍的
     best = None
@@ -374,7 +420,7 @@ def auto_tune_parameters(df_test: pd.DataFrame):
     
     print(f"\n建議使用: {best['config']['name']} 配置")
     print(f"  Depth={best['config']['depth']}, Deviation={best['config']['deviation']}%, Backstep={best['config']['backstep']}")
-    print(f"  轉折點數量: {best['total_points']}")
+    print(f"  轉折點數量: {best['total_points']:,}")
     
     return best
 
@@ -409,22 +455,30 @@ def main():
         if missing_cols:
             raise Exception(f"資料缺少必要欄位: {missing_cols}")
         
-        # 取指定數量的數據
-        df_test = df.tail(args.samples).copy()
+        # 根據參數決定使用的數據量
+        if args.all_data:
+            df_test = df.copy()
+            print(f"\n使用所有數據: {len(df_test):,} 條記錄")
+        else:
+            df_test = df.tail(args.samples).copy()
+            print(f"\n使用最近 {args.samples:,} 條記錄")
+        
         df_test = df_test.reset_index(drop=True)
         
-        print(f"\n測試數據範圍: {len(df_test)} 條記錄")
         if 'timestamp' in df_test.columns:
-            print(f"時間範圍: {df_test['timestamp'].min()} 至 {df_test['timestamp'].max()}")
+            print(f"時間範圏: {df_test['timestamp'].min()} 至 {df_test['timestamp'].max()}")
         
         # 根據模式執行
-        if args.auto_tune:
-            # 自動調整模式
+        if args.auto_tune and not args.all_data:
+            # 自動調整模式 (仅在非全量模式)
             best = auto_tune_parameters(df_test)
             result = best['result']
             config_info = f"Depth={best['config']['depth']}, Deviation={best['config']['deviation']}%, Backstep={best['config']['backstep']}"
         else:
             # 單一參數測試
+            if args.all_data:
+                print(f"\n警告: 使用所有數據(約21萬筆)進行計算,預計需要2-5分鐘")
+            
             print(f"\n使用指定參數: Depth={args.depth}, Deviation={args.deviation}%, Backstep={args.backstep}")
             result_data = test_single_config(df_test, args.depth, args.deviation, args.backstep, verbose=True)
             result = result_data['result']
@@ -434,11 +488,11 @@ def main():
             print(f"\n\n{'='*60}")
             print("結果統計")
             print("="*60)
-            print(f"轉折點總數: {result_data['total_points']}")
-            print(f"HH (更高高點): {result_data['HH']}")
-            print(f"HL (更高低點): {result_data['HL']}")
-            print(f"LH (更低高點): {result_data['LH']}")
-            print(f"LL (更低低點): {result_data['LL']}")
+            print(f"轉折點總數: {result_data['total_points']:,}")
+            print(f"HH (更高高點): {result_data['HH']:,}")
+            print(f"HL (更高低點): {result_data['HL']:,}")
+            print(f"LH (更低高點): {result_data['LH']:,}")
+            print(f"LL (更低低點): {result_data['LL']:,}")
         
         # 顯示部分結果
         zigzag_points = result[result['zigzag'].notna()]
@@ -454,10 +508,14 @@ def main():
         print(zigzag_points[available_cols].head(20).to_string(index=False))
         
         # 儲存結果
+        print(f"\n\n正在儲存結果...")
         result.to_csv(args.output, index=False)
-        print(f"\n\n{'='*60}")
+        
+        print(f"\n{'='*60}")
         print(f"結果已儲存至: {args.output}")
         print(f"使用參數: {config_info}")
+        print(f"資料筆數: {len(result):,}")
+        print(f"轉折點數: {len(zigzag_points):,}")
         print("="*60)
         
     except Exception as e:
