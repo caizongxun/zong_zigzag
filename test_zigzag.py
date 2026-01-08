@@ -36,56 +36,16 @@ class ZigZagMT4:
         backstep: 連續極值點之間的最小K棒間隔
     """
     
-    def __init__(self, depth: int = 12, deviation: float = 5.0, backstep: int = 2):
+    def __init__(self, depth: int = 12, deviation: float = 5.0, backstep: int = 3):
         self.depth = depth
         self.deviation = deviation / 100.0  # 轉換為小數
         self.backstep = backstep
+        print(f"\nZigZag參數: Depth={depth}, Deviation={deviation}%, Backstep={backstep}")
         
-    def find_pivots(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        尋找所有的pivot點(局部極值)
-        
-        Args:
-            data: 必須包含 'high' 和 'low' 欄位的DataFrame
-            
-        Returns:
-            包含pivot點資訊的DataFrame
-        """
-        df = data.copy()
-        n = len(df)
-        
-        # 初始化陣列
-        high_pivots = np.zeros(n, dtype=bool)
-        low_pivots = np.zeros(n, dtype=bool)
-        
-        # 尋找局部高點和低點
-        for i in range(self.depth, n - self.depth):
-            # 檢查是否為局部高點
-            is_high_pivot = True
-            for j in range(i - self.depth, i + self.depth + 1):
-                if j != i and df['high'].iloc[j] >= df['high'].iloc[i]:
-                    is_high_pivot = False
-                    break
-            if is_high_pivot:
-                high_pivots[i] = True
-                
-            # 檢查是否為局部低點
-            is_low_pivot = True
-            for j in range(i - self.depth, i + self.depth + 1):
-                if j != i and df['low'].iloc[j] <= df['low'].iloc[i]:
-                    is_low_pivot = False
-                    break
-            if is_low_pivot:
-                low_pivots[i] = True
-                
-        df['high_pivot'] = high_pivots
-        df['low_pivot'] = low_pivots
-        
-        return df
-    
     def calculate_zigzag(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         計算ZigZag線和標記HH/HL/LL/LH
+        使用MT4風格的算法
         
         Args:
             data: 包含 OHLC 數據的 DataFrame
@@ -93,97 +53,157 @@ class ZigZagMT4:
         Returns:
             包含ZigZag標記的DataFrame
         """
-        df = self.find_pivots(data)
+        df = data.copy()
         n = len(df)
         
         # 初始化結果陣列
+        zigzag_high = np.full(n, np.nan)
+        zigzag_low = np.full(n, np.nan)
         zigzag = np.full(n, np.nan)
-        direction = np.zeros(n)  # 1=上升, -1=下降
+        direction = np.zeros(n)
         swing_type = [''] * n
         
-        # 尋找第一個有效的pivot點
-        last_pivot_idx = -1
-        last_pivot_price = 0
-        last_pivot_is_high = None
+        # 第一步: 尋找所有局部高點和低點
+        print(f"步驟 1: 尋找局部極值 (depth={self.depth})...")
+        for i in range(self.depth, n):
+            # 尋找局部高點
+            is_high = True
+            for j in range(max(0, i - self.depth), i):
+                if df['high'].iloc[j] >= df['high'].iloc[i]:
+                    is_high = False
+                    break
+            if is_high:
+                zigzag_high[i] = df['high'].iloc[i]
+            
+            # 尋找局部低點
+            is_low = True
+            for j in range(max(0, i - self.depth), i):
+                if df['low'].iloc[j] <= df['low'].iloc[i]:
+                    is_low = False
+                    break
+            if is_low:
+                zigzag_low[i] = df['low'].iloc[i]
+        
+        high_count = np.sum(~np.isnan(zigzag_high))
+        low_count = np.sum(~np.isnan(zigzag_low))
+        print(f"  找到 {high_count} 個局部高點, {low_count} 個局部低點")
+        
+        # 第二步: 應用Deviation和Backstep篩選
+        print(f"\n步驟 2: 應用Deviation={self.deviation*100}%和Backstep={self.backstep}篩選...")
+        
+        last_high_idx = -1
+        last_low_idx = -1
+        last_high_price = 0
+        last_low_price = 0
+        confirmed_highs = []
+        confirmed_lows = []
+        
+        # 尋找第一個高點
+        for i in range(n):
+            if not np.isnan(zigzag_high[i]):
+                last_high_idx = i
+                last_high_price = zigzag_high[i]
+                confirmed_highs.append((i, last_high_price))
+                break
+        
+        # 尋找第一個低點
+        for i in range(n):
+            if not np.isnan(zigzag_low[i]):
+                last_low_idx = i
+                last_low_price = zigzag_low[i]
+                confirmed_lows.append((i, last_low_price))
+                break
+        
+        # 掃描所有點
+        for i in range(n):
+            # 處理高點
+            if not np.isnan(zigzag_high[i]):
+                if last_high_idx == -1:
+                    last_high_idx = i
+                    last_high_price = zigzag_high[i]
+                    confirmed_highs.append((i, last_high_price))
+                else:
+                    # 檢查距離和變化幅度
+                    if i - last_high_idx >= self.backstep:
+                        if last_low_idx > last_high_idx:
+                            # 從低點之後的高點,檢查deviation
+                            price_change = abs((zigzag_high[i] - last_low_price) / last_low_price)
+                            if price_change >= self.deviation:
+                                last_high_idx = i
+                                last_high_price = zigzag_high[i]
+                                confirmed_highs.append((i, last_high_price))
+                        else:
+                            # 連續高點,取更高的
+                            if zigzag_high[i] > last_high_price:
+                                # 移除舊的高點
+                                if confirmed_highs and confirmed_highs[-1][0] == last_high_idx:
+                                    confirmed_highs.pop()
+                                last_high_idx = i
+                                last_high_price = zigzag_high[i]
+                                confirmed_highs.append((i, last_high_price))
+            
+            # 處理低點
+            if not np.isnan(zigzag_low[i]):
+                if last_low_idx == -1:
+                    last_low_idx = i
+                    last_low_price = zigzag_low[i]
+                    confirmed_lows.append((i, last_low_price))
+                else:
+                    # 檢查距離和變化幅度
+                    if i - last_low_idx >= self.backstep:
+                        if last_high_idx > last_low_idx:
+                            # 從高點之後的低點,檢查deviation
+                            price_change = abs((zigzag_low[i] - last_high_price) / last_high_price)
+                            if price_change >= self.deviation:
+                                last_low_idx = i
+                                last_low_price = zigzag_low[i]
+                                confirmed_lows.append((i, last_low_price))
+                        else:
+                            # 連續低點,取更低的
+                            if zigzag_low[i] < last_low_price:
+                                # 移除舊的低點
+                                if confirmed_lows and confirmed_lows[-1][0] == last_low_idx:
+                                    confirmed_lows.pop()
+                                last_low_idx = i
+                                last_low_price = zigzag_low[i]
+                                confirmed_lows.append((i, last_low_price))
+        
+        print(f"  確認了 {len(confirmed_highs)} 個高點, {len(confirmed_lows)} 個低點")
+        
+        # 第三步: 合併和排序所有轉折點
+        print(f"\n步驟 3: 合併轉折點並標記HH/HL/LL/LH...")
+        all_pivots = []
+        for idx, price in confirmed_highs:
+            all_pivots.append((idx, price, 'HIGH'))
+        for idx, price in confirmed_lows:
+            all_pivots.append((idx, price, 'LOW'))
+        
+        # 按時間排序
+        all_pivots.sort(key=lambda x: x[0])
+        
+        # 標記swing type
         last_confirmed_high = None
         last_confirmed_low = None
         
-        for i in range(n):
-            if df['high_pivot'].iloc[i]:
-                if last_pivot_idx == -1:
-                    # 第一個點
-                    last_pivot_idx = i
-                    last_pivot_price = df['high'].iloc[i]
-                    last_pivot_is_high = True
-                    zigzag[i] = last_pivot_price
-                    direction[i] = -1  # 從高點開始,接下來是下降
-                    last_confirmed_high = last_pivot_price
-                elif last_pivot_is_high:
-                    # 連續高點,檢查是否更高
-                    if df['high'].iloc[i] > last_pivot_price:
-                        # 更新為更高的高點
-                        zigzag[last_pivot_idx] = np.nan
-                        last_pivot_idx = i
-                        last_pivot_price = df['high'].iloc[i]
-                        zigzag[i] = last_pivot_price
-                        direction[i] = direction[i-1]
-                else:
-                    # 從低點轉到高點,檢查deviation
-                    price_change = abs((df['high'].iloc[i] - last_pivot_price) / last_pivot_price)
-                    if price_change >= self.deviation and (i - last_pivot_idx) >= self.backstep:
-                        # 確認新的高點
-                        last_confirmed_low = last_pivot_price
-                        last_pivot_idx = i
-                        last_pivot_price = df['high'].iloc[i]
-                        last_pivot_is_high = True
-                        zigzag[i] = last_pivot_price
-                        direction[i] = -1
-                        
-                        # 標記swing type
-                        if last_confirmed_high is not None:
-                            if last_pivot_price > last_confirmed_high:
-                                swing_type[i] = 'HH'
-                            else:
-                                swing_type[i] = 'LH'
-                        last_confirmed_high = last_pivot_price
-                        
-            elif df['low_pivot'].iloc[i]:
-                if last_pivot_idx == -1:
-                    # 第一個點
-                    last_pivot_idx = i
-                    last_pivot_price = df['low'].iloc[i]
-                    last_pivot_is_high = False
-                    zigzag[i] = last_pivot_price
-                    direction[i] = 1  # 從低點開始,接下來是上升
-                    last_confirmed_low = last_pivot_price
-                elif not last_pivot_is_high:
-                    # 連續低點,檢查是否更低
-                    if df['low'].iloc[i] < last_pivot_price:
-                        # 更新為更低的低點
-                        zigzag[last_pivot_idx] = np.nan
-                        last_pivot_idx = i
-                        last_pivot_price = df['low'].iloc[i]
-                        zigzag[i] = last_pivot_price
-                        direction[i] = direction[i-1]
-                else:
-                    # 從高點轉到低點,檢查deviation
-                    price_change = abs((df['low'].iloc[i] - last_pivot_price) / last_pivot_price)
-                    if price_change >= self.deviation and (i - last_pivot_idx) >= self.backstep:
-                        # 確認新的低點
-                        last_confirmed_high = last_pivot_price
-                        last_pivot_idx = i
-                        last_pivot_price = df['low'].iloc[i]
-                        last_pivot_is_high = False
-                        zigzag[i] = last_pivot_price
-                        direction[i] = 1
-                        
-                        # 標記swing type
-                        if last_confirmed_low is not None:
-                            if last_pivot_price < last_confirmed_low:
-                                swing_type[i] = 'LL'
-                            else:
-                                swing_type[i] = 'HL'
-                        last_confirmed_low = last_pivot_price
+        for i, (idx, price, ptype) in enumerate(all_pivots):
+            zigzag[idx] = price
+            
+            if ptype == 'HIGH':
+                direction[idx] = -1
+                if last_confirmed_high is not None:
+                    if price > last_confirmed_high:
+                        swing_type[idx] = 'HH'
+                    else:
+                        swing_type[idx] = 'LH'
+                last_confirmed_high = price
+            else:  # LOW
+                direction[idx] = 1
+                if last_confirmed_low is not None:
+                    if price < last_confirmed_low:
+                        swing_type[idx] = 'LL'
+                    else:
+                        swing_type[idx] = 'HL'
+                last_confirmed_low = price
         
         # 填充direction
         for i in range(1, n):
@@ -193,6 +213,8 @@ class ZigZagMT4:
         df['zigzag'] = zigzag
         df['direction'] = direction
         df['swing_type'] = swing_type
+        
+        print(f"  完成! 總計 {len(all_pivots)} 個轉折點")
         
         return df
 
@@ -218,6 +240,48 @@ def download_btc_data(url: str) -> pd.DataFrame:
         raise Exception(f"下載失敗: {str(e)}")
     except Exception as e:
         raise Exception(f"讀取Parquet檔案失敗: {str(e)}")
+
+
+def test_different_parameters(df_test: pd.DataFrame):
+    """
+    測試不同的參數組合
+    """
+    print("\n" + "="*60)
+    print("測試不同參數組合")
+    print("="*60)
+    
+    # 根據搜索結果,對於15分鐘圖表,建議使用更小的deviation
+    test_configs = [
+        {"depth": 12, "deviation": 0.5, "backstep": 3},  # 極小 deviation
+        {"depth": 12, "deviation": 1.0, "backstep": 3},  # 小 deviation
+        {"depth": 12, "deviation": 2.0, "backstep": 3},  # 中等 deviation
+        {"depth": 10, "deviation": 1.0, "backstep": 2},  # 短周期配置
+    ]
+    
+    results = []
+    for config in test_configs:
+        print(f"\n{'='*60}")
+        zigzag = ZigZagMT4(**config)
+        result = zigzag.calculate_zigzag(df_test)
+        
+        zigzag_points = result[result['zigzag'].notna()]
+        hh = (result['swing_type'] == 'HH').sum()
+        hl = (result['swing_type'] == 'HL').sum()
+        lh = (result['swing_type'] == 'LH').sum()
+        ll = (result['swing_type'] == 'LL').sum()
+        
+        results.append({
+            'config': config,
+            'total_points': len(zigzag_points),
+            'HH': hh,
+            'HL': hl,
+            'LH': lh,
+            'LL': ll
+        })
+        
+        print(f"\n結果: {len(zigzag_points)} 個轉折點 (HH:{hh}, HL:{hl}, LH:{lh}, LL:{ll})")
+    
+    return results
 
 
 def main():
@@ -248,28 +312,41 @@ def main():
         
         print(f"\n測試數據範圍: {len(df_test)} 條記錄")
         if 'timestamp' in df_test.columns:
-            print(f"時間範圍: {df_test['timestamp'].min()} 至 {df_test['timestamp'].max()}")
+            print(f"時間範圏: {df_test['timestamp'].min()} 至 {df_test['timestamp'].max()}")
         
-        # 初始化ZigZag指標
-        zigzag = ZigZagMT4(depth=12, deviation=5.0, backstep=2)
+        # 測試不同參數
+        results = test_different_parameters(df_test)
         
-        # 計算ZigZag
-        print("\n正在計算ZigZag...")
-        result = zigzag.calculate_zigzag(df_test)
+        # 選擇最佳參數(轉折點數量在20-50之間的)
+        print(f"\n\n{'='*60}")
+        print("參數選擇建議")
+        print("="*60)
         
-        # 統計結果
-        zigzag_points = result[result['zigzag'].notna()]
-        print(f"\n找到 {len(zigzag_points)} 個ZigZag轉折點")
+        best_config = None
+        for r in results:
+            if 20 <= r['total_points'] <= 50:
+                best_config = r
+                break
         
-        # 統計各類型swing
-        swing_counts = result['swing_type'].value_counts()
-        print("\nSwing Type分佈:")
-        for swing_type, count in swing_counts.items():
-            if swing_type != '':
-                print(f"  {swing_type}: {count}")
+        if best_config is None:
+            # 如果沒有理想的,選擇轉折點最接近35個的
+            best_config = min(results, key=lambda x: abs(x['total_points'] - 35))
+        
+        print(f"\n建議使用配置: {best_config['config']}")
+        print(f"轉折點數量: {best_config['total_points']}")
+        print(f"Swing分佈: HH={best_config['HH']}, HL={best_config['HL']}, LH={best_config['LH']}, LL={best_config['LL']}")
+        
+        # 使用最佳參數重新計算並儲存
+        print(f"\n\n{'='*60}")
+        print("使用最佳參數生成最終結果")
+        print("="*60)
+        
+        final_zigzag = ZigZagMT4(**best_config['config'])
+        result = final_zigzag.calculate_zigzag(df_test)
         
         # 顯示部分結果
-        print("\n部分ZigZag點資訊 (前20個轉折點):")
+        zigzag_points = result[result['zigzag'].notna()]
+        print(f"\n部分ZigZag點資訊 (前20個轉折點):")
         display_cols = ['open', 'high', 'low', 'close', 'zigzag', 'direction', 'swing_type']
         if 'timestamp' in zigzag_points.columns:
             display_cols.insert(0, 'timestamp')
@@ -281,19 +358,6 @@ def main():
         output_file = 'zigzag_result.csv'
         result.to_csv(output_file, index=False)
         print(f"\n結果已儲存至: {output_file}")
-        
-        # 驗證標記邏輯
-        print("\n標記邏輯驗證:")
-        hh_count = (result['swing_type'] == 'HH').sum()
-        hl_count = (result['swing_type'] == 'HL').sum()
-        lh_count = (result['swing_type'] == 'LH').sum()
-        ll_count = (result['swing_type'] == 'LL').sum()
-        
-        print(f"  HH (更高高點): {hh_count}")
-        print(f"  HL (更高低點): {hl_count}")
-        print(f"  LH (更低高點): {lh_count}")
-        print(f"  LL (更低低點): {ll_count}")
-        print(f"  總計: {hh_count + hl_count + lh_count + ll_count}")
         
     except Exception as e:
         print(f"\n錯誤: {str(e)}")
