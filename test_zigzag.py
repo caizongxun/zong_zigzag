@@ -3,6 +3,27 @@ import numpy as np
 from typing import List, Tuple, Optional
 import requests
 from io import BytesIO
+import sys
+
+# 檢查依賴套件
+def check_dependencies():
+    """
+    檢查必要的依賴套件是否安裝
+    """
+    missing = []
+    
+    try:
+        import pyarrow
+    except ImportError:
+        missing.append('pyarrow')
+    
+    if missing:
+        print("\n錯誤: 缺少必要的依賴套件")
+        print("\n請執行以下指令安裝:")
+        print(f"  pip install {' '.join(missing)}")
+        print("\n或者安裝所有建議的套件:")
+        print("  pip install pandas numpy requests pyarrow")
+        sys.exit(1)
 
 class ZigZagMT4:
     """
@@ -187,19 +208,25 @@ def download_btc_data(url: str) -> pd.DataFrame:
         OHLCV DataFrame
     """
     print(f"正在下載數據: {url}")
-    response = requests.get(url)
-    if response.status_code == 200:
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
         df = pd.read_parquet(BytesIO(response.content))
         print(f"數據下載成功: {len(df)} 條記錄")
         return df
-    else:
-        raise Exception(f"下載失敗: HTTP {response.status_code}")
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"下載失敗: {str(e)}")
+    except Exception as e:
+        raise Exception(f"讀取Parquet檔案失敗: {str(e)}")
 
 
 def main():
     """
     主測試函數
     """
+    # 檢查依賴
+    check_dependencies()
+    
     # 下載BTC 15m數據
     url = "https://huggingface.co/datasets/zongowo111/v2-crypto-ohlcv-data/resolve/main/klines/BTCUSDT/BTC_15m.parquet"
     
@@ -209,12 +236,19 @@ def main():
         # 確認欄位名稱(轉換為小寫)
         df.columns = df.columns.str.lower()
         
+        # 檢查必要的欄位
+        required_cols = ['open', 'high', 'low', 'close']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            raise Exception(f"資料缺少必要欄位: {missing_cols}")
+        
         # 只取最近1000條數據進行測試
         df_test = df.tail(1000).copy()
         df_test = df_test.reset_index(drop=True)
         
         print(f"\n測試數據範圍: {len(df_test)} 條記錄")
-        print(f"時間範圍: {df_test['timestamp'].min()} 至 {df_test['timestamp'].max()}")
+        if 'timestamp' in df_test.columns:
+            print(f"時間範圍: {df_test['timestamp'].min()} 至 {df_test['timestamp'].max()}")
         
         # 初始化ZigZag指標
         zigzag = ZigZagMT4(depth=12, deviation=5.0, backstep=2)
@@ -235,19 +269,37 @@ def main():
                 print(f"  {swing_type}: {count}")
         
         # 顯示部分結果
-        print("\n部分ZigZag點資訊:")
-        display_cols = ['timestamp', 'open', 'high', 'low', 'close', 'zigzag', 'direction', 'swing_type']
-        print(zigzag_points[display_cols].head(20).to_string(index=False))
+        print("\n部分ZigZag點資訊 (前20個轉折點):")
+        display_cols = ['open', 'high', 'low', 'close', 'zigzag', 'direction', 'swing_type']
+        if 'timestamp' in zigzag_points.columns:
+            display_cols.insert(0, 'timestamp')
+        
+        available_cols = [col for col in display_cols if col in zigzag_points.columns]
+        print(zigzag_points[available_cols].head(20).to_string(index=False))
         
         # 儲存結果
         output_file = 'zigzag_result.csv'
         result.to_csv(output_file, index=False)
         print(f"\n結果已儲存至: {output_file}")
         
+        # 驗證標記邏輯
+        print("\n標記邏輯驗證:")
+        hh_count = (result['swing_type'] == 'HH').sum()
+        hl_count = (result['swing_type'] == 'HL').sum()
+        lh_count = (result['swing_type'] == 'LH').sum()
+        ll_count = (result['swing_type'] == 'LL').sum()
+        
+        print(f"  HH (更高高點): {hh_count}")
+        print(f"  HL (更高低點): {hl_count}")
+        print(f"  LH (更低高點): {lh_count}")
+        print(f"  LL (更低低點): {ll_count}")
+        print(f"  總計: {hh_count + hl_count + lh_count + ll_count}")
+        
     except Exception as e:
-        print(f"錯誤: {str(e)}")
+        print(f"\n錯誤: {str(e)}")
         import traceback
         traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
