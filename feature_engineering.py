@@ -177,7 +177,7 @@ class ZigZagFeatureEngineering:
         df['last_swing_type'] = df['swing_type'].replace('', np.nan).fillna(method='ffill')
         
         # 編碼成數值
-swing_type_map = {'': 0, 'HH': 1, 'HL': 2, 'LH': 3, 'LL': 4}
+        swing_type_map = {'': 0, 'HH': 1, 'HL': 2, 'LH': 3, 'LL': 4}
         df['last_swing_encoded'] = df['last_swing_type'].map(swing_type_map).fillna(0)
         
         # 當前價格距離上一個轉折點的距離
