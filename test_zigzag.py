@@ -294,8 +294,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description='ZigZag指標測試程式 - MT4風格實現',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-參數說明:
+        epilog="""\n參數說明:
   Depth:     尋找局部極值的回溯窗口大小 (較大值過濾更多小波動)
   Deviation: 價格必須變動的最小百分比 (較大值只顯示重大趨勢)
   Backstep:  連續轉折點的最小間隔K棒數 (防止過密集的信號)
@@ -402,7 +401,10 @@ def auto_tune_parameters(df_test: pd.DataFrame):
     print("參數分析結果")
     print("="*60)
     
-    print(f"\n{'\u914d\u7f6e':<12} {'Depth':<8} {'Dev%':<8} {'Back':<6} {'\u8f49\u6298\u9ede':<10} {'HH':<5} {'HL':<5} {'LH':<5} {'LL':<5}")
+    # 修正: 先定義字串變數,再用於 f-string
+    config_col = '配置'
+    pivot_col = '轉折點'
+    print(f"\n{config_col:<12} {'Depth':<8} {'Dev%':<8} {'Back':<6} {pivot_col:<10} {'HH':<5} {'HL':<5} {'LH':<5} {'LL':<5}")
     print("-" * 70)
     for r in results:
         c = r['config']
