@@ -1,214 +1,254 @@
 import pandas as pd
 import numpy as np
 import pickle
-import sys
-import argparse
-from feature_engineering import ZigZagFeatureEngineer
+import json
+import xgboost as xgb
+from tensorflow import keras
+import warnings
+warnings.filterwarnings('ignore')
+
+from feature_engineering import ZigZagFeatureEngineering
 
 class ZigZagPredictor:
     """
-    ZigZag Swing Type預測器
-    加載訓練好的模型並進行預測
+    使用訓練好的模型進行預測
     """
     
-    def __init__(self, model_path: str = 'zigzag_model.pkl'):
+    def __init__(self, model_dir: str = 'models'):
         """
         Args:
-            model_path: 模型檔案路徑
+            model_dir: 模型檔案目錄
         """
-        print(f"加載模型: {model_path}")
+        self.model_dir = model_dir
+        self.load_models()
         
-        with open(model_path, 'rb') as f:
-            model_data = pickle.load(f)
+    def load_models(self):
+        """
+        載入所有模型和配置
+        """
+        print("正在載入模型...")
         
-        self.model = model_data['model']
-        self.model_name = model_data['model_name']
-        self.scaler = model_data['scaler']
-        self.label_encoder = model_data['label_encoder']
-        self.feature_names = model_data['feature_names']
+        # 載入XGBoost
+        self.xgb_model = xgb.XGBClassifier()
+        self.xgb_model.load_model(f'{self.model_dir}/xgboost_model.json')
+        print("✓ XGBoost模型")
         
-        print(f"模型類型: {self.model_name}")
-        print(f"特徵數量: {len(self.feature_names)}")
-        print(f"標籤類別: {list(self.label_encoder.classes_)}")
+        # 載入LSTM
+        self.lstm_model = keras.models.load_model(f'{self.model_dir}/lstm_model.h5')
+        print("✓ LSTM模型")
+        
+        # 載入Scaler
+        with open(f'{self.model_dir}/scaler.pkl', 'rb') as f:
+            self.scaler = pickle.load(f)
+        print("✓ Scaler")
+        
+        # 載入Label Encoder
+        with open(f'{self.model_dir}/label_encoder.pkl', 'rb') as f:
+            self.label_encoder = pickle.load(f)
+        print("✓ Label Encoder")
+        
+        # 載入特徵名稱
+        with open(f'{self.model_dir}/feature_names.json', 'r') as f:
+            self.feature_names = json.load(f)
+        print("✓ 特徵名稱")
+        
+        # 載入訓練記錄
+        with open(f'{self.model_dir}/training_info.json', 'r') as f:
+            self.training_info = json.load(f)
+        self.sequence_length = self.training_info['sequence_length']
+        print("✓ 訓練記錄")
+        
+        print(f"\n模型資訊:")
+        print(f"  訓練時間: {self.training_info['timestamp']}")
+        print(f"  類別數: {self.training_info['n_classes']}")
+        print(f"  特徵數: {self.training_info['n_features']}")
+        print(f"  準確率: {self.training_info['metrics']['ensemble']['accuracy']:.4f}")
     
-    def predict(self, df: pd.DataFrame) -> pd.DataFrame:
+    def prepare_lstm_sequences(self, X):
         """
-        對新數據進行預測
+        準備LSTM序列
+        """
+        n_samples = len(X) - self.sequence_length + 1
+        X_seq = np.zeros((n_samples, self.sequence_length, X.shape[1]))
+        
+        for i in range(n_samples):
+            X_seq[i] = X[i:i+self.sequence_length]
+        
+        return X_seq
+    
+    def predict(self, df: pd.DataFrame, use_ensemble: bool = True) -> pd.DataFrame:
+        """
+        預測新資料
         
         Args:
-            df: 包含ZigZag計算結果的DataFrame
+            df: 包含OHLCV和ZigZag結果的DataFrame
+            use_ensemble: 是否使用集成模型
             
         Returns:
             包含預測結果的DataFrame
         """
-        print("\n正在進行預測...")
+        # 特徵工程
+        print("\n正在生成特徵...")
+        fe = ZigZagFeatureEngineering()
+        df_features = fe.create_features(df, verbose=False)
         
-        # 生成特徵
-        engineer = ZigZagFeatureEngineer()
-        df_features = engineer.create_all_features(df)
+        # 提取特徵
+        X = df_features[self.feature_names].values
         
-        # 篩選ZigZag轉折點
-        zigzag_points = df_features[df_features['zigzag'].notna()].copy()
-        print(f"轉折點數量: {len(zigzag_points)}")
+        if use_ensemble:
+            print("使用集成模型進行預測...")
+            
+            # XGBoost預測
+            xgb_proba = self.xgb_model.predict_proba(X)
+            
+            # LSTM預測
+            X_scaled = self.scaler.transform(X)
+            X_seq = self.prepare_lstm_sequences(X_scaled)
+            lstm_proba = self.lstm_model.predict(X_seq, verbose=0)
+            
+            # 集成
+            ensemble_proba = 0.6 * xgb_proba[self.sequence_length-1:] + 0.4 * lstm_proba
+            predictions = np.argmax(ensemble_proba, axis=1)
+            confidence = np.max(ensemble_proba, axis=1)
+            
+            # 轉換回標籤
+            predicted_labels = self.label_encoder.inverse_transform(predictions)
+            
+            # 創建結果 DataFrame
+            result_df = df_features.iloc[self.sequence_length-1:].copy()
+            result_df['predicted_swing'] = predicted_labels
+            result_df['confidence'] = confidence
+            
+            # 添加各類別機率
+            for i, label in enumerate(self.label_encoder.classes_):
+                result_df[f'prob_{label}'] = ensemble_proba[:, i]
         
-        if len(zigzag_points) == 0:
-            print("警告: 沒有找到ZigZag轉折點")
-            return df_features
+        else:
+            print("使用XGBoost進行預測...")
+            predictions = self.xgb_model.predict(X)
+            proba = self.xgb_model.predict_proba(X)
+            
+            predicted_labels = self.label_encoder.inverse_transform(predictions)
+            confidence = np.max(proba, axis=1)
+            
+            result_df = df_features.copy()
+            result_df['predicted_swing'] = predicted_labels
+            result_df['confidence'] = confidence
+            
+            for i, label in enumerate(self.label_encoder.classes_):
+                result_df[f'prob_{label}'] = proba[:, i]
         
-        # 準備特徵
-        X = zigzag_points[self.feature_names].values
-        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
-        X_scaled = self.scaler.transform(X)
+        print(f"\n預測完成: {len(result_df):,} 筆")
         
-        # 預測
-        y_pred_encoded = self.model.predict(X_scaled)
-        y_pred = self.label_encoder.inverse_transform(y_pred_encoded)
-        
-        # 預測機率
-        y_pred_proba = self.model.predict_proba(X_scaled)
-        
-        # 將預測結果加入DataFrame
-        zigzag_points['predicted_swing'] = y_pred
-        zigzag_points['prediction_confidence'] = np.max(y_pred_proba, axis=1)
-        
-        # 添加各類別機率
-        for i, label in enumerate(self.label_encoder.classes_):
-            zigzag_points[f'prob_{label}'] = y_pred_proba[:, i]
-        
-        # 合併回原始DataFrame
-        df_result = df_features.copy()
-        for col in ['predicted_swing', 'prediction_confidence'] + \
-                   [f'prob_{label}' for label in self.label_encoder.classes_]:
-            df_result[col] = np.nan
-            df_result.loc[zigzag_points.index, col] = zigzag_points[col]
-        
-        print("\n預測完成!")
-        print(f"預測分佈:")
-        print(zigzag_points['predicted_swing'].value_counts())
-        
-        return df_result
+        return result_df
     
-    def predict_next_swing(self, df: pd.DataFrame, return_proba: bool = True) -> dict:
+    def predict_next_swing(self, df: pd.DataFrame, top_n: int = 5) -> dict:
         """
-        預測下一個Swing Type
-        基於最近的市場狀態
+        預測下一個可能的swing type
         
         Args:
-            df: 包含ZigZag計算結果的DataFrame
-            return_proba: 是否返回機率
+            df: 最近的K線資料
+            top_n: 顯示前 N 個預測結果
             
         Returns:
             預測結果字典
         """
-        # 生成特徵
-        engineer = ZigZagFeatureEngineer()
-        df_features = engineer.create_all_features(df)
+        result_df = self.predict(df, use_ensemble=True)
         
-        # 取最後一筆數據
-        latest_features = df_features.iloc[-1:][self.feature_names].values
-        latest_features = np.nan_to_num(latest_features, nan=0.0, posinf=0.0, neginf=0.0)
-        latest_features_scaled = self.scaler.transform(latest_features)
+        # 取最後一筆
+        last_pred = result_df.iloc[-1]
         
-        # 預測
-        y_pred_encoded = self.model.predict(latest_features_scaled)
-        y_pred = self.label_encoder.inverse_transform(y_pred_encoded)[0]
+        # 排序機率
+        probs = {}
+        for label in self.label_encoder.classes_:
+            probs[label] = last_pred[f'prob_{label}']
+        
+        sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)[:top_n]
         
         result = {
-            'predicted_swing': y_pred,
-            'timestamp': df.iloc[-1].get('timestamp', None),
-            'current_price': df.iloc[-1]['close']
+            'predicted': last_pred['predicted_swing'],
+            'confidence': last_pred['confidence'],
+            'top_predictions': sorted_probs,
+            'timestamp': last_pred.get('timestamp', 'N/A'),
+            'close_price': last_pred['close']
         }
-        
-        if return_proba:
-            y_pred_proba = self.model.predict_proba(latest_features_scaled)[0]
-            result['confidence'] = float(np.max(y_pred_proba))
-            result['probabilities'] = {
-                label: float(prob) 
-                for label, prob in zip(self.label_encoder.classes_, y_pred_proba)
-            }
         
         return result
 
 
 def main():
     """
-    主預測流程
+    示範用法
     """
-    parser = argparse.ArgumentParser(description='ZigZag Swing Type預測')
-    parser.add_argument('--input', type=str, default='zigzag_result.csv',
-                       help='輸入CSV檔案')
-    parser.add_argument('--model', type=str, default='zigzag_model.pkl',
-                       help='模型檔案')
-    parser.add_argument('--output', type=str, default='zigzag_predictions.csv',
-                       help='輸出預測結果檔案')
-    parser.add_argument('--next-only', action='store_true',
-                       help='只預測下一個Swing')
-    args = parser.parse_args()
+    import sys
     
     print("="*60)
-    print("ZigZag Swing Type預測")
+    print("ZigZag Swing Type 預測")
     print("="*60)
     
     try:
-        # 加載預測器
-        predictor = ZigZagPredictor(args.model)
+        # 載入模型
+        predictor = ZigZagPredictor()
         
-        # 讀取數據
-        print(f"\n讀取數據: {args.input}")
-        df = pd.read_csv(args.input)
+        # 讀取資料
+        print("\n讀取 zigzag_result.csv...")
+        df = pd.read_csv('zigzag_result.csv')
         print(f"資料筆數: {len(df):,}")
         
-        if args.next_only:
-            # 只預測下一個
-            print("\n預測模式: 下一個Swing")
-            result = predictor.predict_next_swing(df)
-            
-            print("\n" + "="*60)
-            print("預測結果")
-            print("="*60)
-            print(f"預測 Swing Type: {result['predicted_swing']}")
-            print(f"信心度: {result['confidence']:.2%}")
-            print(f"當前價格: {result['current_price']:.2f}")
-            if result.get('timestamp'):
-                print(f"時間: {result['timestamp']}")
-            
-            print("\n各類別機率:")
-            for label, prob in sorted(result['probabilities'].items(), 
-                                     key=lambda x: x[1], reverse=True):
-                print(f"  {label}: {prob:.2%}")
-        else:
-            # 預測所有轉折點
-            print("\n預測模式: 所有轉折點")
-            df_result = predictor.predict(df)
-            
-            # 儲存結果
-            print(f"\n儲存預測結果至: {args.output}")
-            df_result.to_csv(args.output, index=False)
-            
-            # 顯示部分結果
-            pred_points = df_result[df_result['predicted_swing'].notna()]
-            if len(pred_points) > 0:
-                print("\n部分預測結果 (最後10個轉折點):")
-                display_cols = ['timestamp', 'close', 'swing_type', 'predicted_swing', 
-                               'prediction_confidence']
-                display_cols = [c for c in display_cols if c in pred_points.columns]
-                print(pred_points[display_cols].tail(10).to_string(index=False))
-                
-                # 計算準確率 (如果有實際標籤)
-                if 'swing_type' in pred_points.columns:
-                    valid_mask = pred_points['swing_type'].isin(['HH', 'HL', 'LL', 'LH'])
-                    if valid_mask.sum() > 0:
-                        accuracy = (pred_points[valid_mask]['swing_type'] == 
-                                  pred_points[valid_mask]['predicted_swing']).mean()
-                        print(f"\n預測準確率: {accuracy:.2%}")
+        # 使用最後 1000 筆進行預測
+        df_recent = df.tail(1000).copy()
+        
+        # 預測
+        result_df = predictor.predict(df_recent, use_ensemble=True)
+        
+        # 顯示結果
+        print("\n" + "="*60)
+        print("預測結果概覽")
+        print("="*60)
+        
+        print(f"\n預測筆數: {len(result_df):,}")
+        print(f"\n預測分佈:")
+        print(result_df['predicted_swing'].value_counts())
+        
+        print(f"\n平均信心度: {result_df['confidence'].mean():.4f}")
+        
+        # 顯示最近 10 筆預測
+        print("\n最近 10 筆預測:")
+        display_cols = ['close', 'predicted_swing', 'confidence']
+        if 'timestamp' in result_df.columns:
+            display_cols.insert(0, 'timestamp')
+        print(result_df[display_cols].tail(10).to_string(index=False))
+        
+        # 預測下一個swing
+        print("\n" + "="*60)
+        print("下一個Swing預測")
+        print("="*60)
+        
+        next_swing = predictor.predict_next_swing(df_recent)
+        print(f"\n當前價格: {next_swing['close_price']:.2f}")
+        if next_swing['timestamp'] != 'N/A':
+            print(f"時間: {next_swing['timestamp']}")
+        print(f"\n預測: {next_swing['predicted']}")
+        print(f"信心度: {next_swing['confidence']:.4f}")
+        
+        print(f"\n所有可能性:")
+        for label, prob in next_swing['top_predictions']:
+            print(f"  {label}: {prob:.4f} ({prob*100:.1f}%)")
+        
+        # 儲存預測結果
+        output_file = 'prediction_results.csv'
+        result_df.to_csv(output_file, index=False)
+        print(f"\n預測結果已儲存: {output_file}")
         
         print("\n" + "="*60)
-        print("預測完成!")
+        print("完成")
         print("="*60)
         
     except FileNotFoundError as e:
         print(f"\n錯誤: 找不到檔案")
-        print(str(e))
+        print("請確保:")
+        print("1. 已執行 test_zigzag.py 生成 zigzag_result.csv")
+        print("2. 已執行 train_model.py 訓練模型")
         sys.exit(1)
     except Exception as e:
         print(f"\n錯誤: {str(e)}")
