@@ -159,6 +159,8 @@ class ZigZagFeatureEngineering:
         """
         添加歷史ZigZag轉折點特徵
         利用過往的HH/HL/LL/LH模式
+        
+        注意: 這裡不能使用ffill填充swing_type,否則會導致數據洩漏
         """
         df = df.copy()
         
@@ -173,12 +175,9 @@ class ZigZagFeatureEngineering:
             elif i > 0:
                 df.loc[i, 'bars_since_pivot'] = df.loc[i-1, 'bars_since_pivot'] + 1
         
-        # 上一個轉折點的類型
-        df['last_swing_type'] = df['swing_type'].replace('', np.nan).fillna(method='ffill')
-        
-        # 編碼成數值
+        # 編碼swing type (不使用ffill)
         swing_type_map = {'': 0, 'HH': 1, 'HL': 2, 'LH': 3, 'LL': 4}
-        df['last_swing_encoded'] = df['last_swing_type'].map(swing_type_map).fillna(0)
+        df['swing_type_encoded'] = df['swing_type'].map(swing_type_map).fillna(0)
         
         # 當前價格距離上一個轉折點的距離
         df['distance_from_last_pivot'] = 0.0
@@ -192,16 +191,23 @@ class ZigZagFeatureEngineering:
                 df.loc[df.index[i], 'distance_from_last_pivot'] = \
                     (df['close'].iloc[i] - last_pivot_price) / last_pivot_price
         
-        # 最近N個轉折點的統計
-        # 使用簡單的標記方式,避免對字串做 rolling apply
-        swing_encoded = df['swing_type'].map(swing_type_map).fillna(0)
+        # 最近N個轉折點的統計 (只統計真正的轉折點)
+        pivot_df = df[df['zigzag'].notna()].copy()
+        if len(pivot_df) > 0:
+            for n in [2, 3, 5]:
+                for swing in ['HH', 'HL', 'LH', 'LL']:
+                    # 計算最近N個轉折點中該類型的比例
+                    rolling_count = pivot_df['swing_type'].rolling(window=n, min_periods=1).apply(
+                        lambda x: (x == swing).sum() / len(x)
+                    )
+                    df.loc[pivot_df.index, f'recent_{n}_{swing.lower()}_ratio'] = rolling_count
         
+        # 填充非轉折點的統計值為0
         for n in [2, 3, 5]:
-            # 最近N個HH的比例 (HH編碼為1)
-            df[f'recent_{n}_hh_ratio'] = (swing_encoded.rolling(window=50).sum() == n * 1).astype(float) / n
-            
-            # 最近N個HL的比例 (HL編碼為2)
-            df[f'recent_{n}_hl_ratio'] = (swing_encoded.rolling(window=50).sum() == n * 2).astype(float) / n
+            for swing in ['HH', 'HL', 'LH', 'LL']:
+                col = f'recent_{n}_{swing.lower()}_ratio'
+                if col in df.columns:
+                    df[col] = df[col].fillna(0)
         
         return df
     
@@ -308,7 +314,7 @@ def prepare_ml_dataset(df: pd.DataFrame, target_col: str = 'swing_type',
     
     # 分離特徵和標籤 - 排除所有非數值和非特徵欄位
     exclude_cols = ['timestamp', 'symbol', 'open', 'high', 'low', 'close', 'volume', 
-                    'zigzag', 'direction', 'swing_type', 'last_swing_type']
+                    'zigzag', 'direction', 'swing_type', 'last_swing_type', 'swing_type_encoded']
     
     # 只保留數值類型的欄位
     numeric_cols = df_pivots.select_dtypes(include=[np.number]).columns.tolist()
