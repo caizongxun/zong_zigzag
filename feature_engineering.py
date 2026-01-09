@@ -160,13 +160,15 @@ class ZigZagFeatureEngineering:
         添加歷史ZigZag轉折點特徵
         利用過往的HH/HL/LL/LH模式
         
-        注意: 這裡不能使用ffill填充swing_type,否則會導致數據洩漏
+        重要: 此處使用pivot_mask嚴格限制,只有實際轉折點才計算統計
         """
         df = df.copy()
         
+        # 創建轉折點掩碼 - 嚴格限制在有zigzag值的行
+        pivot_mask = df['zigzag'].notna()
+        
         # 距離上一個轉折點的K棒數
         df['bars_since_pivot'] = 0
-        pivot_mask = df['zigzag'].notna()
         pivot_indices = df[pivot_mask].index
         
         for i in range(len(df)):
@@ -175,24 +177,25 @@ class ZigZagFeatureEngineering:
             elif i > 0:
                 df.loc[i, 'bars_since_pivot'] = df.loc[i-1, 'bars_since_pivot'] + 1
         
-        # 編碼swing type (不使用ffill)
+        # 編碼swing type - 關鍵: 只為轉折點編碼,其他為0
         swing_type_map = {'': 0, 'HH': 1, 'HL': 2, 'LH': 3, 'LL': 4}
-        df['swing_type_encoded'] = df['swing_type'].map(swing_type_map).fillna(0)
+        df['swing_type_encoded'] = 0  # 默認為0
+        df.loc[pivot_mask, 'swing_type_encoded'] = df.loc[pivot_mask, 'swing_type'].map(swing_type_map).fillna(0)
         
         # 當前價格距離上一個轉折點的距離
         df['distance_from_last_pivot'] = 0.0
         last_pivot_price = df['close'].iloc[0]
         
         for i in range(len(df)):
-            if not pd.isna(df['zigzag'].iloc[i]):
+            if pivot_mask.iloc[i]:
                 last_pivot_price = df['zigzag'].iloc[i]
                 df.loc[df.index[i], 'distance_from_last_pivot'] = 0.0
             else:
                 df.loc[df.index[i], 'distance_from_last_pivot'] = \
                     (df['close'].iloc[i] - last_pivot_price) / last_pivot_price
         
-        # 最近N個轉折點的統計 (只統計真正的轉折點)
-        pivot_df = df[df['zigzag'].notna()].copy()
+        # 最近N個轉折點的統計 (只基於實際轉折點)
+        pivot_df = df[pivot_mask].copy()
         if len(pivot_df) > 0:
             for n in [2, 3, 5]:
                 for swing in ['HH', 'HL', 'LH', 'LL']:
@@ -238,6 +241,13 @@ class ZigZagFeatureEngineering:
         
         if verbose:
             print(f"原始資料筆數: {original_len:,}")
+            pivot_count = df['zigzag'].notna().sum()
+            pivot_pct = (pivot_count / original_len * 100) if original_len > 0 else 0
+            print(f"轉折點數量: {pivot_count:,} ({pivot_pct:.2f}%)")
+            if pivot_pct < 0.5:
+                print("警告: 轉折點比例過低 (<0.5%),請檢查ZigZag參數配置")
+            elif pivot_pct > 5:
+                print("警告: 轉折點比例過高 (>5%),可能存在參數配置問題")
         
         # 1. 技術指標
         if verbose:
@@ -286,6 +296,11 @@ def prepare_ml_dataset(df: pd.DataFrame, target_col: str = 'swing_type',
     """
     準備機器學習資料集
     
+    重要: 此函數實現了嚴格的數據洩漏防護:
+    1. 只使用有有效swing_type的行 (實際轉折點)
+    2. 驗證轉折點比例是否合理
+    3. 不使用forward-fill會導致數據洩漏
+    
     Args:
         df: 包含特徵的DataFrame
         target_col: 目標變數欄位
@@ -303,12 +318,28 @@ def prepare_ml_dataset(df: pd.DataFrame, target_col: str = 'swing_type',
         print("準備訓練資料集")
         print("="*60)
     
-    # 只保留有swing type的資料 (即ZigZag轉折點)
-    df_pivots = df[df[target_col].notna() & (df[target_col] != '')].copy()
+    # 關鍵: 只保留有有效swing type的資料 (即真正的ZigZag轉折點)
+    # 不能使用ffill,因為那會導致數據洩漏
+    df_pivots = df[(df[target_col].notna()) & (df[target_col] != '')].copy()
+    
+    total_rows = len(df)
+    pivot_rows = len(df_pivots)
+    pivot_ratio = (pivot_rows / total_rows * 100) if total_rows > 0 else 0
     
     if verbose:
-        print(f"\n原始資料: {len(df):,} 筆")
-        print(f"轉折點資料: {len(df_pivots):,} 筆")
+        print(f"\n原始資料: {total_rows:,} 筆")
+        print(f"轉折點資料: {pivot_rows:,} 筆")
+        print(f"轉折點比例: {pivot_ratio:.3f}%")
+        
+        # 驗證數據完整性
+        if pivot_ratio > 5:
+            print("\n警告: 轉折點比例 > 5%,可能存在數據洩漏問題!")
+            print("請檢查:")
+            print("  1. ZigZag參數是否合理")
+            print("  2. 是否誤用了--all-data參數導致過度標記")
+        elif pivot_ratio < 0.5:
+            print("\n警告: 轉折點比例 < 0.5%,可能參數過於保守")
+        
         print(f"\nSwing Type分佈:")
         print(df_pivots[target_col].value_counts())
     
