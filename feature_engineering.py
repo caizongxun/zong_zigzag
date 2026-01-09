@@ -222,6 +222,10 @@ class ZigZagFeatureEngineering:
         """
         創建所有特徵
         
+        重要: 此函數不會填充swing_type！
+        swing_type列只有實驗轉折點找這個值。
+        有缺失值是正常的，表示非轉折點。
+        
         Args:
             df: 包含OHLCV和ZigZag結果的DataFrame
             verbose: 是否顯示進度
@@ -281,8 +285,13 @@ class ZigZagFeatureEngineering:
         max_window = max(self.lookback_windows + [200])  # 200是最大的SMA窗口
         df = df.iloc[max_window:].copy()
         
-        # 填充剩餘的NaN
-        df = df.fillna(method='ffill').fillna(method='bfill').fillna(0)
+        # 重要: 不要填充swing_type, 但填充其他数值列
+        # swing_type应該有缺失值 (正常), 只有實際轉折點的行才有值
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        df[numeric_cols] = df[numeric_cols].fillna(method='ffill').fillna(method='bfill').fillna(0)
+        
+        # swing_type只留下有值的行，不填充
+        # (不其他列可有空值是正常的)
         
         if verbose:
             print(f"\n清理後資料筆數: {len(df):,}")
