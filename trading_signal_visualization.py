@@ -64,19 +64,14 @@ class TradingSignalVisualizer:
         self.swing_type_int_to_str = {0: 'HH', 1: 'HL', 2: 'LH', 3: 'LL'}
         self.swing_type_str_to_int = {'HH': 0, 'HL': 1, 'LH': 2, 'LL': 3}
     
-    def validate_predictions(self, df_features, output_dir='results'):
+    def validate_predictions(self, df_features, output_dir='results', recent_bars=300):
         """
         驗證預測點位是否有效
         
         參數：
             df_features: 特徵數據框
             output_dir: 輸出目錄
-        
-        驗證邏輯：
-        - HH (更高高點)：當前高點應該 > 之前的高點 → 有效的上升趨勢
-        - LL (更低低點)：當前低點應該 < 之前的低點 → 有效的下降趨勢
-        - LH (更低高點)：當前高點應該 < 之前的高點 → 下降趨勢開始
-        - HL (更高低點)：當前低點應該 > 之前的低點 → 上升趨勢開始
+            recent_bars: 需要顯示的最近K棒数
         """
         import os
         os.makedirs(output_dir, exist_ok=True)
@@ -130,7 +125,6 @@ class TradingSignalVisualizer:
             if prev_pivot_idx is not None:
                 prev_high = df.iloc[prev_pivot_idx]['high']
                 prev_low = df.iloc[prev_pivot_idx]['low']
-                prev_type = df.iloc[prev_pivot_idx]['swing_type']
                 
                 # 驗證轉折點有效性
                 if current_type == 'HH':
@@ -145,14 +139,14 @@ class TradingSignalVisualizer:
         # 綜合判斷
         df['pivot_valid'] = (df['high_valid'] | df['low_valid']) & df['is_pivot']
         
-        # 統計結果
+        # 全體統計
         pivot_data = df[df['is_pivot']].copy()
         if len(pivot_data) > 0:
             valid_count = pivot_data['pivot_valid'].sum()
             total_count = len(pivot_data)
             valid_rate = valid_count / total_count if total_count > 0 else 0
             
-            print(f"\n轉折點統計：")
+            print(f"\n全體轉折點統計：")
             print(f"  總轉折點數: {total_count}")
             print(f"  有效轉折點: {valid_count}")
             print(f"  無效轉折點: {total_count - valid_count}")
@@ -168,8 +162,11 @@ class TradingSignalVisualizer:
                     type_rate = type_valid / type_total if type_total > 0 else 0
                     print(f"  {swing_type}: {type_valid}/{type_total} ({type_rate:.2%})")
         
-        # 生成圖表
-        self._plot_validation_results(df, output_dir)
+        # 生成統計圖表
+        self._plot_overall_stats(df, output_dir)
+        
+        # 生成最近 N 根的詳細圖表
+        self._plot_recent_detailed(df, output_dir, recent_bars)
         
         # 保存詳細結果
         signal_data = df[df['is_pivot']][[
@@ -184,33 +181,27 @@ class TradingSignalVisualizer:
         
         return df
     
-    def _plot_validation_results(self, df, output_dir='results'):
+    def _plot_overall_stats(self, df, output_dir='results'):
         """
-        繪製驗證結果圖表
+        繪製全體統計圖表 (既有圖)
         """
         if not MATPLOTLIB_AVAILABLE:
-            print("跳過圖表生成: matplotlib 未安裝")
             return
         
-        print(f"\n生成可視化圖表...")
+        print(f"\n生成全體統計圖表...")
         
-        # 設置風格
         sns.set_style("whitegrid")
-        plt.rcParams['figure.figsize'] = (16, 12)
+        fig = plt.figure(figsize=(18, 12))
         
-        fig = plt.figure(figsize=(18, 14))
-        
-        # 1. 價格走勢圖 + 轉折點
+        # 1. 價格走勢图 + 轉折點
         ax1 = plt.subplot(3, 2, (1, 3))
         
-        # 繪製價格
         ax1.plot(range(len(df)), df['close'], color='black', linewidth=1, label='收盤價', alpha=0.7)
         ax1.fill_between(range(len(df)), df['low'], df['high'], alpha=0.2, color='gray')
         
-        # 獲取轉折點數據
         pivot_data = df[df['is_pivot']].copy()
         
-        # HH (更高高點) - 綠色上三角
+        # HH
         hh_data = pivot_data[pivot_data['swing_type'] == 'HH']
         hh_valid = hh_data[hh_data['pivot_valid']]
         hh_invalid = hh_data[~hh_data['pivot_valid']]
@@ -221,7 +212,7 @@ class TradingSignalVisualizer:
             ax1.scatter(hh_invalid.index, hh_invalid['high'], marker='v', s=100, color='lightgreen', 
                        label='HH (無效)', zorder=4, edgecolors='darkgreen', linewidth=1, alpha=0.5)
         
-        # LL (更低低點) - 紅色下三角
+        # LL
         ll_data = pivot_data[pivot_data['swing_type'] == 'LL']
         ll_valid = ll_data[ll_data['pivot_valid']]
         ll_invalid = ll_data[~ll_data['pivot_valid']]
@@ -232,7 +223,7 @@ class TradingSignalVisualizer:
             ax1.scatter(ll_invalid.index, ll_invalid['low'], marker='^', s=100, color='lightcoral', 
                        label='LL (無效)', zorder=4, edgecolors='darkred', linewidth=1, alpha=0.5)
         
-        # LH (更低高點) - 藍色向下三角
+        # LH
         lh_data = pivot_data[pivot_data['swing_type'] == 'LH']
         lh_valid = lh_data[lh_data['pivot_valid']]
         lh_invalid = lh_data[~lh_data['pivot_valid']]
@@ -243,7 +234,7 @@ class TradingSignalVisualizer:
             ax1.scatter(lh_invalid.index, lh_invalid['high'], marker='^', s=100, color='lightblue', 
                        label='LH (無效)', zorder=4, edgecolors='darkblue', linewidth=1, alpha=0.5)
         
-        # HL (更高低點) - 橙色向上三角
+        # HL
         hl_data = pivot_data[pivot_data['swing_type'] == 'HL']
         hl_valid = hl_data[hl_data['pivot_valid']]
         hl_invalid = hl_data[~hl_data['pivot_valid']]
@@ -254,7 +245,7 @@ class TradingSignalVisualizer:
             ax1.scatter(hl_invalid.index, hl_invalid['low'], marker='v', s=100, color='lightyellow', 
                        label='HL (無效)', zorder=4, edgecolors='darkorange', linewidth=1, alpha=0.5)
         
-        ax1.set_title('價格走勢 + 模型預測轉折點 (有效性驗證)', fontsize=14, fontweight='bold')
+        ax1.set_title('一整体价格走务 + 轉折點', fontsize=14, fontweight='bold')
         ax1.set_xlabel('時間索引')
         ax1.set_ylabel('價格')
         ax1.legend(loc='upper left', fontsize=8)
@@ -387,9 +378,152 @@ class TradingSignalVisualizer:
         
         # 保存圖表
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_path = f"{output_dir}/pivot_validation_{timestamp}.png"
+        output_path = f"{output_dir}/pivot_validation_overall_{timestamp}.png"
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        print(f"✓ 圖表已保存至: {output_path}")
+        print(f"✓ 整體統計圖表已保存至: {output_path}")
+        
+        plt.close()
+    
+    def _plot_recent_detailed(self, df, output_dir='results', recent_bars=300):
+        """
+        繪製最近 N 根的詳細圖表（每个轉折點有效性詳細信息）
+        """
+        if not MATPLOTLIB_AVAILABLE:
+            return
+        
+        print(f"\n生成最近 {recent_bars} 根的詳細圖表...")
+        
+        # 取最近的 N 根
+        df_recent = df.tail(recent_bars).copy()
+        df_recent['index_in_recent'] = range(len(df_recent))
+        
+        sns.set_style("whitegrid")
+        fig = plt.figure(figsize=(20, 12))
+        
+        # 上方: 價格走勢 + 轉折點
+        ax1 = plt.subplot(2, 1, 1)
+        
+        ax1.plot(df_recent['index_in_recent'], df_recent['close'], color='black', 
+                linewidth=1.5, label='收盤價', alpha=0.8)
+        ax1.fill_between(df_recent['index_in_recent'], df_recent['low'], df_recent['high'], 
+                         alpha=0.2, color='gray')
+        
+        pivot_data_recent = df_recent[df_recent['is_pivot']].copy()
+        
+        # 有效 vs 無效轉折點標記
+        for swing_type, marker, valid_color, invalid_color in [
+            ('HH', '^', 'darkgreen', 'lightgreen'),
+            ('LL', 'v', 'darkred', 'lightcoral'),
+            ('LH', 'v', 'darkblue', 'lightblue'),
+            ('HL', '^', 'darkorange', 'lightyellow')
+        ]:
+            type_data = pivot_data_recent[pivot_data_recent['swing_type'] == swing_type]
+            
+            if swing_type in ['HH', 'LH']:
+                price_col = 'high'
+            else:
+                price_col = 'low'
+            
+            # 有效
+            valid_data = type_data[type_data['pivot_valid']]
+            if len(valid_data) > 0:
+                ax1.scatter(valid_data['index_in_recent'], valid_data[price_col], 
+                           marker=marker, s=300, color=valid_color, 
+                           zorder=5, edgecolors='black', linewidth=2,
+                           label=f'{swing_type} 有效')
+            
+            # 無效
+            invalid_data = type_data[~type_data['pivot_valid']]
+            if len(invalid_data) > 0:
+                ax1.scatter(invalid_data['index_in_recent'], invalid_data[price_col], 
+                           marker=marker, s=150, color=invalid_color, 
+                           zorder=4, edgecolors='black', linewidth=1, alpha=0.6,
+                           label=f'{swing_type} 無效')
+        
+        ax1.set_title(f'最近 {recent_bars} 根K棒 - 價格走勢 + 轉折點有效性', 
+                     fontsize=14, fontweight='bold')
+        ax1.set_xlabel('K棒索引 (从最旧到最新)')
+        ax1.set_ylabel('價格')
+        ax1.legend(loc='upper left', fontsize=9, ncol=4)
+        ax1.grid(True, alpha=0.3)
+        
+        # 下方: 为每个轉折點的詳細信息
+        ax2 = plt.subplot(2, 1, 2)
+        ax2.axis('off')
+        
+        # 制作詳細表格
+        pivot_info_list = []
+        for idx, (_, row) in enumerate(pivot_data_recent.iterrows()):
+            swing_type = row['swing_type']
+            predicted = row['predicted_signal']
+            confidence = row['confidence']
+            is_valid = row['pivot_valid']
+            close = row['close']
+            high = row['high']
+            low = row['low']
+            volume = row['volume']
+            
+            valid_text = '有效' if is_valid else '無效'
+            valid_symbol = '✓' if is_valid else '✗'
+            match_symbol = '✓' if swing_type == predicted else '✗'
+            
+            pivot_info_list.append([
+                f"#{idx+1}",
+                swing_type,
+                predicted,
+                match_symbol,
+                f"{confidence:.2%}",
+                valid_text,
+                valid_symbol,
+                f"{close:.2f}",
+                f"{high:.2f}",
+                f"{low:.2f}",
+                f"{volume:.0f}"
+            ])
+        
+        if pivot_info_list:
+            columns = ['顺序', '实际', '预测', '符合', '置信度', 
+                     '初验', '有效', '收盤', '高', '低', '成交量']
+            
+            table = ax2.table(cellText=pivot_info_list, colLabels=columns,
+                            cellLoc='center', loc='center',
+                            colWidths=[0.08, 0.08, 0.08, 0.08, 0.1, 0.08, 0.08, 0.1, 0.1, 0.1, 0.1])
+            
+            table.auto_set_font_size(False)
+            table.set_fontsize(9)
+            table.scale(1, 2)
+            
+            # 设置索头样式
+            for i in range(len(columns)):
+                table[(0, i)].set_facecolor('#40466e')
+                table[(0, i)].set_text_props(weight='bold', color='white')
+            
+            # 设置内容样式
+            for i, row_data in enumerate(pivot_info_list, start=1):
+                for j, cell_value in enumerate(row_data):
+                    cell = table[(i, j)]
+                    
+                    # 根据有效性改变背景色
+                    if row_data[5] == '有效':
+                        cell.set_facecolor('#d4edda')
+                    else:
+                        cell.set_facecolor('#f8d7da')
+                    
+                    # 字体样式
+                    if j == 6:  # 有效列
+                        cell.set_text_props(weight='bold', fontsize=10)
+                        if row_data[5] == '有效':
+                            cell.set_text_props(color='green')
+                        else:
+                            cell.set_text_props(color='red')
+        
+        plt.tight_layout()
+        
+        # 保存圖表
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = f"{output_dir}/pivot_validation_recent_{recent_bars}bars_{timestamp}.png"
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"✓ 最近 {recent_bars} 根詳細圖表已保存至: {output_path}")
         
         plt.close()
 
@@ -408,6 +542,9 @@ def main():
   
   # 指定數據路徑
   python trading_signal_visualization.py --data-path data_cache/features.csv
+  
+  # 指定最近 500 根K棒
+  python trading_signal_visualization.py --recent-bars 500
         '''
     )
     
@@ -417,6 +554,8 @@ def main():
                        help='特徵數據路徑')
     parser.add_argument('--output-dir', type=str, default='results',
                        help='結果輸出目錄')
+    parser.add_argument('--recent-bars', type=int, default=300,
+                       help='最近 N 根K棒')
     
     args = parser.parse_args()
     
@@ -430,7 +569,7 @@ def main():
         print(f"✓ 載入 {len(df_features):,} 條記錄")
         
         # 驗證並可視化
-        df_results = visualizer.validate_predictions(df_features, args.output_dir)
+        df_results = visualizer.validate_predictions(df_features, args.output_dir, args.recent_bars)
         
         print("\n" + "#"*60)
         print("# 驗證完成")
