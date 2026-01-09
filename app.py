@@ -48,6 +48,27 @@ app = Flask(__name__)
 CORS(app)
 
 
+def convert_to_python_types(obj):
+    """
+    遞輸会諮 NumPy 類型離轉換為 Python 粗來類型
+    目程是 JSON 序列化
+    """
+    if isinstance(obj, dict):
+        return {convert_to_python_types(k): convert_to_python_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_python_types(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    else:
+        return obj
+
+
 class RealTimePredictorService:
     """
     實時預測服務
@@ -123,7 +144,7 @@ class RealTimePredictorService:
             
             return True
         except Exception as e:
-            print(f"模型加載失敗: {str(e)}")
+            print(f"模型加載失敖: {str(e)}")
             import traceback
             traceback.print_exc()
             return False
@@ -216,7 +237,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"獲取 yfinance 數據失敗: {str(e)}")
+            print(f"獲取 yfinance 數據失敕: {str(e)}")
             return None
     
     def get_realtime_data(self, pair='BTCUSDT', interval='15m'):
@@ -238,7 +259,7 @@ class RealTimePredictorService:
     
     def _zigzag_points(self, prices, depth=12, deviation=0.8):
         """
-        簡單 ZigZag 轉折點計算
+        简单 ZigZag 轉折點計算
         返回轉折點位置的布林陣列
         """
         if len(prices) < depth * 2:
@@ -322,7 +343,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"特徵提取失敗: {str(e)}")
+            print(f"特徵提取失敖: {str(e)}")
             return None
     
     def _calculate_rsi(self, prices, period=14):
@@ -378,7 +399,7 @@ class RealTimePredictorService:
             if df_features is None:
                 return {
                     'status': 'error',
-                    'message': '特徵提取失敗'
+                    'message': '特徵提取失敖'
                 }
             
             # 獲取最新的 K 棒
@@ -431,17 +452,20 @@ class RealTimePredictorService:
             if confidence < 0.6:
                 signal = 'HOLD'
             else:
-                signal = pred_label
+                signal = str(pred_label)  # 轉換為字串，以避不对的數字類型
+            
+            # 将 label_encoder.classes_ 轉換為 Python 類型（缺沒 JSON 序列化）
+            class_labels = [str(label) for label in self.label_encoder.classes_]
             
             self.latest_prediction = {
                 'timestamp': datetime.now().isoformat(),
                 'signal': signal,
-                'predicted_type': pred_label,
+                'predicted_type': str(pred_label),
                 'confidence': confidence,
                 'ohlcv': self.latest_ohlcv,
                 'all_probabilities': {
-                    label: float(prob) 
-                    for label, prob in zip(self.label_encoder.classes_, y_pred_proba)
+                    class_labels[idx]: float(prob) 
+                    for idx, prob in enumerate(y_pred_proba)
                 }
             }
             
@@ -457,7 +481,7 @@ class RealTimePredictorService:
             }
         
         except Exception as e:
-            print(f"預測失敗: {str(e)}")
+            print(f"預測失敖: {str(e)}")
             import traceback
             traceback.print_exc()
             return {
@@ -523,9 +547,11 @@ def get_latest():
             'message': '暫無預測數據，請稍候'
         })
     
+    # 轉換為 Python 類型
+    response_data = convert_to_python_types(predictor_service.latest_prediction)
     return jsonify({
         'status': 'success',
-        'data': predictor_service.latest_prediction
+        'data': response_data
     })
 
 
@@ -533,9 +559,11 @@ def get_latest():
 def get_history():
     """獲取歷史預測"""
     limit = int(request.args.get('limit', 100))
+    # 轉換為 Python 類型
+    history_data = convert_to_python_types(predictor_service.history[-limit:])
     return jsonify({
         'status': 'success',
-        'data': predictor_service.history[-limit:]
+        'data': history_data
     })
 
 
@@ -546,6 +574,8 @@ def predict():
     interval = request.json.get('interval', '15m')
     
     result = predictor_service.predict(pair, interval)
+    # 轉換為 Python 類型
+    result = convert_to_python_types(result)
     return jsonify(result)
 
 
