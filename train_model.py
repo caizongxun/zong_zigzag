@@ -19,7 +19,7 @@ class ZigZagHybridModel:
     """
     混合模型: XGBoost + LSTM
     基於2025年研究最佳實踐:
-    1. XGBoost葵理表格化特徵 (技術指標, 統計特徵)
+    1. XGBoost處理表格化特徵 (技術指標, 統計特徵)
     2. LSTM捕捉時間序列模式 (價格動量)
     3. 集成兩個模型的預測
     """
@@ -106,12 +106,12 @@ class ZigZagHybridModel:
         基於2025研究,LSTM適合捕捉時間序列的長期依賴
         """
         model = keras.Sequential([
-            # 第一层LSTM
+            # 第一層LSTM
             layers.LSTM(128, return_sequences=True, input_shape=input_shape),
             layers.Dropout(0.3),
             layers.BatchNormalization(),
             
-            # 第二层LSTM
+            # 第二層LSTM
             layers.LSTM(64, return_sequences=False),
             layers.Dropout(0.3),
             layers.BatchNormalization(),
@@ -163,7 +163,7 @@ class ZigZagHybridModel:
     def train_lstm_model(self, X_train, y_train, X_test, y_test):
         """
         訓練LSTM模型
-        重要: 樣本太少時會自動設定序列長度
+        重要: 樣本太少時會自動調整序列長度
         """
         print("\n" + "="*60)
         print("訓練LSTM模型")
@@ -173,7 +173,7 @@ class ZigZagHybridModel:
         print(f"\n訓練樣本數: {len(X_train)}")
         if len(X_train) < 10:
             print("⚠ 警告: 訓練樣本很少 (< 10),LSTM可能無法有效訓練")
-            print("建議當使用更多資料或改為XGBoost単独模型")
+            print("建議使用更多資料或改為XGBoost單獨模型")
         
         # 標準化
         X_train_scaled = self.scaler.fit_transform(X_train)
@@ -197,8 +197,8 @@ class ZigZagHybridModel:
         y_train_cat = to_categorical(y_train_seq, num_classes=self.n_classes)
         y_test_cat = to_categorical(y_test_seq, num_classes=self.n_classes)
         
-        print(f"訓練集形狠: {X_train_seq.shape}")
-        print(f"測試集形狠: {X_test_seq.shape}")
+        print(f"訓練集形狀: {X_train_seq.shape}")
+        print(f"測試集形狀: {X_test_seq.shape}")
         
         # 建立模型
         self.lstm_model = self.build_lstm_model(
@@ -249,14 +249,15 @@ class ZigZagHybridModel:
     def ensemble_predict(self, X, y=None):
         """
         集成預測: 結合XGBoost和LSTM的預測
-        重要: 如果沒有LSTM模型,只輸出XGBoost預測
+        重要: 必須對齊預測結果的長度
         """
         # XGBoost預測機率
         xgb_proba = self.xgb_model.predict_proba(X)
+        xgb_pred = np.argmax(xgb_proba, axis=1)
         
         # 如果沒有LSTM模型,直接輸出XGBoost
         if self.lstm_model is None:
-            return np.argmax(xgb_proba, axis=1), xgb_proba
+            return xgb_pred, xgb_proba
         
         # LSTM預測機率
         X_scaled = self.scaler.transform(X)
@@ -264,13 +265,24 @@ class ZigZagHybridModel:
         
         if X_seq is None:
             # LSTM輸入太少,只使用XGBoost
-            return np.argmax(xgb_proba, axis=1), xgb_proba
+            return xgb_pred, xgb_proba
         
         lstm_proba = self.lstm_model.predict(X_seq, verbose=0)
+        lstm_pred = np.argmax(lstm_proba, axis=1)
+        
+        # 對齊長度: LSTM序列會縮短結果
+        # 取後面的部分 (對應最新的序列)
+        seq_offset = self.sequence_length - 1
+        if len(xgb_proba) > len(lstm_proba):
+            xgb_proba_aligned = xgb_proba[-len(lstm_proba):]
+            xgb_pred_aligned = xgb_pred[-len(lstm_proba):]
+        else:
+            xgb_proba_aligned = xgb_proba
+            xgb_pred_aligned = xgb_pred
         
         # 加權平均 (XGBoost比重0.6, LSTM比重0.4)
         # 根據研究,XGBoost在金融資料上通常較穩定
-        ensemble_proba = 0.6 * xgb_proba[self.sequence_length-1:] + 0.4 * lstm_proba
+        ensemble_proba = 0.6 * xgb_proba_aligned + 0.4 * lstm_proba
         ensemble_pred = np.argmax(ensemble_proba, axis=1)
         
         return ensemble_pred, ensemble_proba
@@ -280,19 +292,19 @@ def validate_data_integrity(df: pd.DataFrame, label_encoder):
     """
     驗證數據完整性,防止數據洩漏
     
-    重要: 此函數棄清的是有效swing_type的行數,而不是所有行
+    重要: 此函數檢查的是有效swing_type的行數,而不是所有行
     """
     print("\n" + "="*60)
     print("數據完整性驗證")
     print("="*60)
     
-    # 關鍵: 棄清的是有效swing_type的行（即真實轉折點）
+    # 關鍵: 檢查的是有效swing_type的行（即真實轉折點）
     pivot_mask = df['swing_type'].notna() & (df['swing_type'] != '')
     pivot_count = pivot_mask.sum()
     total_count = len(df)
     pivot_ratio = (pivot_count / total_count * 100) if total_count > 0 else 0
     
-    print(f"總資料譆: {total_count:,}")
+    print(f"總資料筆: {total_count:,}")
     print(f"轉折點數量: {pivot_count:,}")
     print(f"轉折點比例: {pivot_ratio:.3f}%")
     
@@ -306,12 +318,12 @@ def validate_data_integrity(df: pd.DataFrame, label_encoder):
         return False
     elif pivot_ratio < 0.5:
         print("\n⚠ 警告: 轉折點比例 < 0.5%")
-        print("轉折點提取可能太嚴格,考慠可放寬满 Deviation 參數")
+        print("轉折點提取可能太嚴格,考慮可放寬 Deviation 參數")
         return False
     else:
         print("\n✓ 轉折點比例正常")
     
-    # 驗證類別分布
+    # 驗證類別分佈
     pivot_df = df[pivot_mask]
     print(f"\nSwing Type分布:")
     swing_counts = pivot_df['swing_type'].value_counts()
@@ -376,11 +388,11 @@ def main():
     # 5b. LSTM (樣本太少時可能會取消)
     lstm_pred = None
     history = None
-    if len(X_train) > 5:  # 樣本大5筆以上才訓練LSTM
+    if len(X_train) > 5:  # 樣本數5筆以上才訓練LSTM
         lstm_pred, history = model.train_lstm_model(X_train, y_train, X_test, y_test)
     else:
         print("\n警告: 訓練樣本太少 (< 5),取消LSTM訓練")
-        print("將仅使用XGBoost模型")
+        print("將僅使用XGBoost模型")
     
     # 5c. 集成模型
     print("\n" + "="*60)
@@ -389,8 +401,9 @@ def main():
     ensemble_pred, ensemble_proba = model.ensemble_predict(X_test, y_test)
     
     # 調整測試集長度 (如果LSTM存在)
-    if lstm_pred is not None:
-        y_test_adj = y_test[model.sequence_length-1:]
+    if lstm_pred is not None and len(lstm_pred) < len(y_test):
+        # LSTM序列會縮短結果,取後面對應部分
+        y_test_adj = y_test[-len(lstm_pred):]
     else:
         y_test_adj = y_test
     
@@ -428,13 +441,17 @@ def main():
     print("集成模型詳細報告")
     print("="*60)
     print("\n分類報告:")
+    
+    # 使用labels參數確保所有類別都在報告中
     print(classification_report(
         y_test_adj, ensemble_pred, 
-        target_names=label_encoder.classes_
+        target_names=label_encoder.classes_,
+        labels=np.arange(len(label_encoder.classes_)),
+        zero_division=0
     ))
     
-    print("\n混淡矩陣:")
-    cm = confusion_matrix(y_test_adj, ensemble_pred)
+    print("\n混淆矩陣:")
+    cm = confusion_matrix(y_test_adj, ensemble_pred, labels=np.arange(len(label_encoder.classes_)))
     cm_df = pd.DataFrame(
         cm, 
         index=label_encoder.classes_, 
@@ -501,7 +518,7 @@ def main():
     print(f"F1 Score: {ensemble_f1:.4f}")
     
     if lstm_pred is None:
-        print("\n注意: 樣本数太少,未訓練LSTM模型,仅使用XGBoost")
+        print("\n注意: 樣本數太少,未訓練LSTM模型,僅使用XGBoost")
     
     return True
 
