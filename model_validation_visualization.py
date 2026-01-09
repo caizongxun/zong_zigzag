@@ -79,6 +79,14 @@ class ModelValidator:
         # 轉換類別為字符串進行輸出
         classes_str = ', '.join([str(c) for c in self.label_encoder.classes_])
         print(f"  類別: {classes_str}")
+        
+        # 創建字符串到整數的映射（HH->0, HL->1, LH->2, LL->3）
+        self.swing_type_to_int = {
+            'HH': 0,  # 更高高點
+            'HL': 1,  # 更高低點
+            'LH': 2,  # 更低高點
+            'LL': 3   # 更低低點
+        }
     
     def validate_on_data(self, df_features):
         """
@@ -110,8 +118,17 @@ class ModelValidator:
             print("警告: 沒有有效的標籤數據")
             return None
         
-        # 編碼標籤
-        y_true = self.label_encoder.transform(df[label_col])
+        # 轉換字符串標籤為整數（HH->0, HL->1, LH->2, LL->3）
+        y_true_labels = df[label_col].map(self.swing_type_to_int)
+        
+        # 移除無法映射的行
+        valid_idx = y_true_labels.notna()
+        df = df[valid_idx]
+        y_true = y_true_labels[valid_idx].values.astype(int)
+        
+        if len(df) == 0:
+            print("警告: 沒有有效的標籤數據")
+            return None
         
         # 提取特徵
         X = df[self.feature_names].values
@@ -140,9 +157,11 @@ class ModelValidator:
         
         # 詳細分類報告
         print(f"\n詳細分類報告:")
+        swing_type_int_to_str = {0: 'HH', 1: 'HL', 2: 'LH', 3: 'LL'}
+        class_names = [swing_type_int_to_str.get(i, str(i)) for i in range(len(self.label_encoder.classes_))]
         print(classification_report(
             y_true, y_pred,
-            target_names=[str(c) for c in self.label_encoder.classes_],
+            target_names=class_names,
             zero_division=0
         ))
         
@@ -154,12 +173,13 @@ class ModelValidator:
         # 添加預測詳情
         df['y_true'] = y_true
         df['y_pred'] = y_pred
-        df['y_pred_label'] = [str(self.label_encoder.classes_[i]) for i in y_pred]
+        df['y_pred_label'] = [swing_type_int_to_str.get(i, str(i)) for i in y_pred]
         df['prediction_correct'] = (y_true == y_pred)
         df['max_prob'] = np.max(y_pred_proba, axis=1)
         
         metrics['confusion_matrix'] = cm
         metrics['predictions'] = df
+        metrics['swing_type_int_to_str'] = swing_type_int_to_str
         
         return metrics
     
@@ -187,10 +207,12 @@ class ModelValidator:
         # 創建圖表
         fig = plt.figure(figsize=(16, 12))
         
+        swing_type_int_to_str = metrics.get('swing_type_int_to_str', {0: 'HH', 1: 'HL', 2: 'LH', 3: 'LL'})
+        class_labels = [swing_type_int_to_str.get(i, str(i)) for i in range(4)]
+        
         # 1. 混淆矩陣
         ax1 = plt.subplot(2, 3, 1)
         cm = metrics['confusion_matrix']
-        class_labels = [str(c) for c in self.label_encoder.classes_]
         sns.heatmap(
             cm, annot=True, fmt='d', cmap='Blues',
             xticklabels=class_labels,
@@ -225,13 +247,13 @@ class ModelValidator:
         true_counts = predictions_df['swing_type'].value_counts()
         pred_counts = predictions_df['y_pred_label'].value_counts()
         
-        x = np.arange(len(self.label_encoder.classes_))
+        x = np.arange(len(class_labels))
         width = 0.35
         
         true_vals = [true_counts.get(label, 0) for label in class_labels]
         pred_vals = [pred_counts.get(label, 0) for label in class_labels]
         
-        ax3.bar(x - width/2, true_vals, width, label='實際', alpha=0.8)
+        ax3.bar(x - width/2, true_vals, width, label='真實', alpha=0.8)
         ax3.bar(x + width/2, pred_vals, width, label='預測', alpha=0.8)
         ax3.set_xlabel('標籤類別')
         ax3.set_ylabel('數量')
@@ -275,7 +297,7 @@ class ModelValidator:
         errors = predictions_df[~predictions_df['prediction_correct']]
         if len(errors) > 0:
             error_types = errors.groupby(['swing_type', 'y_pred_label']).size().reset_index(name='count')
-            error_text = "錯誤預測類型 (實際 -> 預測):\n\n"
+            error_text = "錯誤預測類型 (真實 -> 預測):\n\n"
             for _, row in error_types.iterrows():
                 error_text += f"{row['swing_type']} -> {row['y_pred_label']}: {row['count']}\n"
             ax6.text(0.1, 0.5, error_text, fontsize=10, verticalalignment='center',
@@ -318,7 +340,7 @@ class ModelValidator:
             
             # 標籤分布
             fig_plotly.add_trace(
-                go.Bar(x=class_labels, y=true_vals, name='實際'),
+                go.Bar(x=class_labels, y=true_vals, name='真實'),
                 row=1, col=3
             )
             fig_plotly.add_trace(
@@ -371,7 +393,8 @@ class ModelValidator:
         y_pred_proba = self.xgb_model.predict_proba(X)
         max_prob = np.max(y_pred_proba, axis=1)
         
-        df['predicted_class'] = [str(self.label_encoder.classes_[i]) for i in y_pred]
+        swing_type_int_to_str = {0: 'HH', 1: 'HL', 2: 'LH', 3: 'LL'}
+        df['predicted_class'] = [swing_type_int_to_str.get(i, str(i)) for i in y_pred]
         df['confidence'] = max_prob
         df['high_confidence'] = max_prob >= threshold
         
@@ -404,7 +427,8 @@ class ModelValidator:
         import os
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         
-        class_labels = [str(c) for c in self.label_encoder.classes_]
+        swing_type_int_to_str = metrics.get('swing_type_int_to_str', {0: 'HH', 1: 'HL', 2: 'LH', 3: 'LL'})
+        class_labels = [swing_type_int_to_str.get(i, str(i)) for i in range(4)]
         
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write("="*60 + "\n")
