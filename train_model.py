@@ -114,7 +114,7 @@ class ZigZagHybridModel:
             
             layers.Dense(32, activation='relu'),
             
-            # 輸出層
+            # 輸出层
             layers.Dense(self.n_classes, activation='softmax')
         ])
         
@@ -162,8 +162,8 @@ class ZigZagHybridModel:
         y_train_cat = to_categorical(y_train_seq, num_classes=self.n_classes)
         y_test_cat = to_categorical(y_test_seq, num_classes=self.n_classes)
         
-        print(f"訓練集形狀: {X_train_seq.shape}")
-        print(f"測試集形狀: {X_test_seq.shape}")
+        print(f"訓練集形狠: {X_train_seq.shape}")
+        print(f"測試集形狠: {X_test_seq.shape}")
         
         # 建立模型
         self.lstm_model = self.build_lstm_model(
@@ -205,7 +205,7 @@ class ZigZagHybridModel:
         print(f"\n訓練集準確率: {train_acc:.4f}")
         print(f"測試集準確率: {test_acc:.4f}")
         
-        #預測
+        # 預測
         test_pred_proba = self.lstm_model.predict(X_test_seq, verbose=0)
         test_pred = np.argmax(test_pred_proba, axis=1)
         
@@ -231,6 +231,54 @@ class ZigZagHybridModel:
         return ensemble_pred, ensemble_proba
 
 
+def validate_data_integrity(df: pd.DataFrame, label_encoder):
+    """
+    驗證數據完整性,防止數據洩漏
+    """
+    print("\n" + "="*60)
+    print("數據完整性驗證")
+    print("="*60)
+    
+    pivot_mask = df['zigzag'].notna()
+    pivot_count = pivot_mask.sum()
+    total_count = len(df)
+    pivot_ratio = (pivot_count / total_count * 100) if total_count > 0 else 0
+    
+    print(f"總資料譆: {total_count:,}")
+    print(f"轉折點數量: {pivot_count:,}")
+    print(f"轉折點比例: {pivot_ratio:.3f}%")
+    
+    # 驗證比例是否合理
+    if pivot_ratio > 5:
+        print("\n⚠ 警告: 轉折點比例 > 5%")
+        print("這可能表示存在數據洩漏問題!")
+        print("請檢查:")
+        print("  1. ZigZag參數需要調整")
+        print("  2. 是否誤用了--all-data參數")
+        return False
+    elif pivot_ratio < 0.5:
+        print("\n⚠ 警告: 轉折點比例 < 0.5%")
+        print("轉折點提取可能太嚴格,考慠放寬满ZigZag參數")
+        return False
+    else:
+        print("\n✓ 轉折點比例正常")
+    
+    # 驗證類別分布
+    pivot_df = df[pivot_mask]
+    print(f"\nSwing Type分布:")
+    swing_counts = pivot_df['swing_type'].value_counts()
+    print(swing_counts)
+    
+    for swing_type in label_encoder.classes_:
+        count = (pivot_df['swing_type'] == swing_type).sum()
+        if count == 0:
+            print(f"\n警告: 類別 '{swing_type}' 沒有資料!")
+            return False
+    
+    print("\n✓ 數據完整性驗證符合")
+    return True
+
+
 def main():
     """
     主訓練流程
@@ -241,33 +289,40 @@ def main():
     print(f"開始時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     # 1. 讀取資料
-    print("\n[1/6] 讀取ZigZag結果...")
+    print("\n[1/7] 讀取ZigZag結果...")
     df = pd.read_csv('zigzag_result.csv')
     print(f"資料筆數: {len(df):,}")
     
     # 2. 特徵工程
-    print("\n[2/6] 特徵工程...")
+    print("\n[2/7] 特徵工程...")
     fe = ZigZagFeatureEngineering(lookback_windows=[5, 10, 20, 50])
     df_features = fe.create_features(df, verbose=True)
     
     # 3. 準備訓練資料
-    print("\n[3/6] 準備訓練資料...")
+    print("\n[3/7] 準備訓練資料...")
     X_train, X_test, y_train, y_test, feature_names, label_encoder = prepare_ml_dataset(
         df_features, test_size=0.2, verbose=True
     )
     
-    # 4. 訓練模型
-    print("\n[4/6] 訓練模型...")
+    # 4. 驗證數據完整性
+    print("\n[4/7] 驗證數據完整性...")
+    if not validate_data_integrity(df_features, label_encoder):
+        print("\n錯誤: 數據完整性驗證失敗")
+        print("請先解決數據洩漏問題也後再試")
+        return False
+    
+    # 5. 訓練模型
+    print("\n[5/7] 訓練模型...")
     model = ZigZagHybridModel(n_classes=len(label_encoder.classes_), sequence_length=30)
     model.feature_names = feature_names
     
-    # 4a. XGBoost
+    # 5a. XGBoost
     xgb_pred = model.build_xgboost_model(X_train, y_train, X_test, y_test)
     
-    # 4b. LSTM
+    # 5b. LSTM
     lstm_pred, history = model.train_lstm_model(X_train, y_train, X_test, y_test)
     
-    # 4c. 集成模型
+    # 5c. 集成模型
     print("\n" + "="*60)
     print("集成模型預測")
     print("="*60)
@@ -276,8 +331,8 @@ def main():
     # 調整測試集長度 (因為LSTM需要序列)
     y_test_adj = y_test[model.sequence_length-1:]
     
-    # 5. 評估
-    print("\n[5/6] 模型評估...")
+    # 6. 評估
+    print("\n[6/7] 模型評估...")
     
     print("\n" + "="*60)
     print("最終結果比較")
@@ -314,7 +369,7 @@ def main():
         target_names=label_encoder.classes_
     ))
     
-    print("\n混淆矩陣:")
+    print("\n混淡矩陣:")
     cm = confusion_matrix(y_test_adj, ensemble_pred)
     cm_df = pd.DataFrame(
         cm, 
@@ -323,8 +378,8 @@ def main():
     )
     print(cm_df)
     
-    # 6. 儲存模型
-    print("\n[6/6] 儲存模型...")
+    # 7. 儲存模型
+    print("\n[7/7] 儲存模型...")
     
     # 儲存XGBoost
     model.xgb_model.save_model('models/xgboost_model.json')
@@ -376,19 +431,23 @@ def main():
     print(f"\n最佳模型: 集成模型")
     print(f"準確率: {ensemble_acc:.4f}")
     print(f"F1 Score: {ensemble_f1:.4f}")
+    
+    return True
 
 
 if __name__ == "__main__":
     import os
     import sys
     
-    # 創建models目錄
+    # 創建 models目錄
     if not os.path.exists('models'):
         os.makedirs('models')
         print("創建 models/ 目錄")
     
     try:
-        main()
+        success = main()
+        if not success:
+            sys.exit(1)
     except FileNotFoundError:
         print("\n錯誤: 找不到 zigzag_result.csv")
         print("請先執行 test_zigzag.py 生成結果檔案")
