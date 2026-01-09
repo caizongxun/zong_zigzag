@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-ZigZag 實時預測 API 例端
+ZigZag 實時預測 API 伺服端
 Flask 應用，提供實時市場數據和模型預測
 支援光端選擇幣種和時間框架
+支援每秒自動更新，使用前一根完成的K棒進行預測
 
 啟動方法：
   python app.py
@@ -15,10 +16,12 @@ API 端點：
   GET /api/history - 獲取歷史數據
   POST /api/predict - 觸發預測
   GET /api/config - 獲取配置信息
+  WebSocket /ws - 實時推送信號
 """
 
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import pandas as pd
 import numpy as np
 import pickle
@@ -30,6 +33,7 @@ import threading
 import time
 import warnings
 warnings.filterwarnings('ignore')
+import asyncio
 
 import xgboost as xgb
 from sklearn.preprocessing import StandardScaler
@@ -51,6 +55,15 @@ except ImportError:
 
 app = Flask(__name__)
 CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+# 信號定義 - 明確標示每個代碼的含義
+SIGNAL_DEFINITIONS = {
+    0: "HH (Higher High) - 上升趨勢延續，新高",
+    1: "HL (High Low) - 上升轉下降，頭部反轉信號",
+    2: "LH (Low High) - 下降轉上升，底部反轉信號",
+    3: "LL (Lower Low) - 下降趨勢延續，新低"
+}
 
 # 22 個支持的幣種
 AVAILABLE_PAIRS = [
@@ -88,6 +101,7 @@ class RealTimePredictorService:
     """
     實時預測服務
     負責加載模型、獲取實時數據、進行預測
+    每秒自動更新，使用前一根完成的K棒
     """
     
     def __init__(self):
@@ -97,21 +111,23 @@ class RealTimePredictorService:
         self.params = None
         self.scaler = StandardScaler()
         self.latest_prediction = None
-        self.latest_ohlcv = None
+        self.previous_ohlcv = None  # 前一根K棒
+        self.current_ohlcv = None   # 當前K棒
         self.history = []
         self.update_thread = None
         self.is_running = False
         self.binance_client = None
         self.current_pair = 'BTCUSDT'
         self.current_interval = '15m'
+        self.last_candle_time = None  # 追蹤上一根K棒的時間
         
         # 初始化 Binance 客戶端
         if BINANCE_AVAILABLE:
             try:
                 self.binance_client = Client()
-                print("✓ Binance 客戶端已初始化")
+                print("Binance 客戶端已初始化")
             except:
-                print("⚠ Binance 客戶端初始化失敗")
+                print("Binance 客戶端初始化失敗")
         
         self.load_model()
     
@@ -145,7 +161,7 @@ class RealTimePredictorService:
         加載指定幣種和時間框架的模型
         """
         try:
-            # 這一實數据幫下模型目錄
+            # 這一實数据幫下模型目錄
             model_path = f'models/{pair}/{interval}'
             
             if not Path(model_path).exists():
@@ -227,7 +243,7 @@ class RealTimePredictorService:
             )
             
             if not klines:
-                print(f"⚠ Binance 未獲取數據: {pair} {interval}")
+                print(f"Binance 未獲取數據: {pair} {interval}")
                 return None
             
             # 轉換為 DataFrame
@@ -295,7 +311,7 @@ class RealTimePredictorService:
     def get_realtime_data(self, pair='BTCUSDT', interval='15m'):
         """
         獲取實時數據
-        選項: Binance (API) → yfinance (備用)
+        選項: Binance (API) - yfinance (備用)
         """
         # 儯先使用 Binance API
         if BINANCE_AVAILABLE:
@@ -427,9 +443,28 @@ class RealTimePredictorService:
         
         return rsi
     
-    def predict(self, pair='BTCUSDT', interval='15m'):
+    def _get_signal_code_and_description(self, prediction_value):
+        """
+        將預測值映射到信號代碼和描述
+        0: HH, 1: HL, 2: LH, 3: LL
+        """
+        try:
+            signal_code = int(prediction_value)
+            if signal_code not in SIGNAL_DEFINITIONS:
+                signal_code = 0
+        except:
+            signal_code = 0
+        
+        return signal_code, SIGNAL_DEFINITIONS[signal_code]
+    
+    def predict(self, pair='BTCUSDT', interval='15m', use_previous_candle=True):
         """
         進行預測
+        
+        參數:
+            pair: 交易對
+            interval: 時間框架
+            use_previous_candle: 是否使用前一根完成的K棒進行預測
         """
         try:
             if self.model is None:
@@ -454,16 +489,30 @@ class RealTimePredictorService:
                     'message': '特徵提取失敖'
                 }
             
-            # 獲取最新的 K 棊
-            latest_row = df_features.iloc[-1]
-            self.latest_ohlcv = {
-                'timestamp': str(latest_row['timestamp']),
-                'open': float(latest_row['open']),
-                'high': float(latest_row['high']),
-                'low': float(latest_row['low']),
-                'close': float(latest_row['close']),
-                'volume': float(latest_row['volume']) if pd.notna(latest_row['volume']) else 0
+            # 決定使用哪一根K棒
+            if use_previous_candle and len(df_features) >= 2:
+                # 使用前一根完成的K棒
+                analysis_row = df_features.iloc[-2]  # 倒數第二個
+                candle_type = "前一根"
+            else:
+                # 使用當前K棒
+                analysis_row = df_features.iloc[-1]  # 最後一個
+                candle_type = "當前"
+            
+            # 保存OHLCV數據
+            ohlcv_data = {
+                'timestamp': str(analysis_row['timestamp']),
+                'open': float(analysis_row['open']),
+                'high': float(analysis_row['high']),
+                'low': float(analysis_row['low']),
+                'close': float(analysis_row['close']),
+                'volume': float(analysis_row['volume']) if pd.notna(analysis_row['volume']) else 0
             }
+            
+            if use_previous_candle:
+                self.previous_ohlcv = ohlcv_data
+            else:
+                self.current_ohlcv = ohlcv_data
             
             # 準備特徵橢量 - 按照模型訓練時的順序
             feature_cols = [col for col in self.feature_names if col in df_features.columns]
@@ -500,23 +549,31 @@ class RealTimePredictorService:
             pred_label = self.label_encoder.inverse_transform([y_pred])[0]
             confidence = float(np.max(y_pred_proba))
             
+            # 獲取信號代碼和描述
+            signal_code, signal_description = self._get_signal_code_and_description(pred_label)
+            
             # 判斷是否應該 HOLD
             if confidence < 0.6:
                 signal = 'HOLD'
+                signal_code = -1
             else:
-                signal = str(pred_label)  # 轉換為字串，以便不對的數字類形
+                signal = f"{signal_code}_{['HH', 'HL', 'LH', 'LL'][signal_code]}"
             
-            # 將 label_encoder.classes_ 轉換為 Python 類形（缺沒 JSON 序列化）
+            # 將 label_encoder.classes_ 轉換為 Python 類形
             class_labels = [str(label) for label in self.label_encoder.classes_]
             
             self.latest_prediction = {
                 'timestamp': datetime.now().isoformat(),
                 'pair': pair,
                 'interval': interval,
-                'signal': signal,
+                'signal_code': signal_code,
+                'signal_name': ['HH', 'HL', 'LH', 'LL'][signal_code] if signal_code >= 0 else 'HOLD',
+                'signal_description': signal_description if signal_code >= 0 else 'Hold Position',
                 'predicted_type': str(pred_label),
                 'confidence': confidence,
-                'ohlcv': self.latest_ohlcv,
+                'ohlcv': ohlcv_data,
+                'candle_type': candle_type,
+                'based_on': 'previous_candle' if use_previous_candle else 'current_candle',
                 'all_probabilities': {
                     class_labels[idx]: float(prob) 
                     for idx, prob in enumerate(y_pred_proba)
@@ -543,9 +600,10 @@ class RealTimePredictorService:
                 'message': str(e)
             }
     
-    def start_auto_update(self, pair='BTCUSDT', interval='15m', update_interval=60):
+    def start_auto_update(self, pair='BTCUSDT', interval='15m', update_interval=1):
         """
         開始自動更新線程
+        默認每1秒更新一次
         """
         if self.is_running:
             return
@@ -561,11 +619,18 @@ class RealTimePredictorService:
     
     def _auto_update_loop(self, pair, interval, update_interval):
         """
-        自動更新趨環
+        自動更新趨環 - 每秒執行一次，使用前一根K棒
         """
         while self.is_running:
             try:
-                self.predict(pair, interval)
+                self.predict(pair, interval, use_previous_candle=True)
+                
+                # 通過 WebSocket 推送最新信號
+                socketio.emit('prediction_update', {
+                    'status': 'success',
+                    'data': convert_to_python_types(self.latest_prediction)
+                }, broadcast=True)
+                
                 time.sleep(update_interval)
             except Exception as e:
                 print(f"自動更新出錯: {str(e)}")
@@ -623,8 +688,8 @@ def load_model():
     if success:
         # 停止之前的自動更新
         predictor_service.stop_auto_update()
-        # 開始新的自動更新
-        predictor_service.start_auto_update(pair, interval, update_interval=60)
+        # 開始新的自動更新 - 每1秒更新一次
+        predictor_service.start_auto_update(pair, interval, update_interval=1)
         
         return jsonify({
             'status': 'success',
@@ -633,7 +698,8 @@ def load_model():
                 'pair': pair,
                 'interval': interval,
                 'depth': predictor_service.params.get('depth'),
-                'deviation': predictor_service.params.get('deviation')
+                'deviation': predictor_service.params.get('deviation'),
+                'update_interval': 1
             }
         })
     else:
@@ -677,13 +743,14 @@ def predict():
     """觸發預測"""
     pair = request.json.get('pair', 'BTCUSDT')
     interval = request.json.get('interval', '15m')
+    use_previous = request.json.get('use_previous_candle', True)
     
     # 檢查模型是否匹配
     if predictor_service.current_pair != pair or predictor_service.current_interval != interval:
         # 需要加載新模型
         predictor_service.load_model(pair, interval)
     
-    result = predictor_service.predict(pair, interval)
+    result = predictor_service.predict(pair, interval, use_previous_candle=use_previous)
     # 轉換為 Python 類形
     result = convert_to_python_types(result)
     return jsonify(result)
@@ -700,7 +767,9 @@ def get_config():
                 'interval': predictor_service.current_interval,
                 'depth': predictor_service.params.get('depth', 12),
                 'deviation': predictor_service.params.get('deviation', 0.8),
-                'num_features': len(predictor_service.feature_names) if predictor_service.feature_names else 0
+                'num_features': len(predictor_service.feature_names) if predictor_service.feature_names else 0,
+                'auto_update_enabled': predictor_service.is_running,
+                'update_interval': 1
             }
         })
     else:
@@ -708,6 +777,15 @@ def get_config():
             'status': 'error',
             'message': '模型未加載'
         })
+
+
+@app.route('/api/signal-definitions', methods=['GET'])
+def get_signal_definitions():
+    """獲取信號定義"""
+    return jsonify({
+        'status': 'success',
+        'definitions': SIGNAL_DEFINITIONS
+    })
 
 
 @app.route('/api/health', methods=['GET'])
@@ -720,16 +798,37 @@ def health_check():
         'binance_available': BINANCE_AVAILABLE and predictor_service.binance_client is not None,
         'yfinance_available': YFINANCE_AVAILABLE,
         'current_pair': predictor_service.current_pair,
-        'current_interval': predictor_service.current_interval
+        'current_interval': predictor_service.current_interval,
+        'auto_update_enabled': predictor_service.is_running
     })
 
 
+# WebSocket 事件
+@socketio.on('connect')
+def handle_connect():
+    print(f'客戶端已連接')
+    emit('connection_response', {'data': 'Connected to prediction server'})
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print(f'客戶端已斷開')
+
+
+@socketio.on('subscribe')
+def handle_subscribe(data):
+    pair = data.get('pair', 'BTCUSDT')
+    interval = data.get('interval', '15m')
+    join_room(f'{pair}_{interval}')
+    emit('subscribed', {'pair': pair, 'interval': interval})
+
+
 if __name__ == '__main__':
-    # 開始自動更新
+    # 開始自動更新 - 每1秒更新一次
     predictor_service.start_auto_update(
         pair='BTCUSDT',
         interval='15m',
-        update_interval=60  # 每 60 秒更新一次
+        update_interval=1
     )
     
     # 啟動 Flask 應用
@@ -738,11 +837,14 @@ if __name__ == '__main__':
     print("="*60)
     print("訪問: http://localhost:5000")
     print("API: http://localhost:5000/api/latest")
-    print("模式Binance API 儯先, yfinance 備用")
+    print("WebSocket: ws://localhost:5000/socket.io")
+    print("特徵: 每秒自動更新，使用前一根K棒進行預測")
+    print("信號: 0=HH, 1=HL, 2=LH, 3=LL")
+    print("模式: Binance API 儯先, yfinance 備用")
     print("="*60 + "\n")
     
     try:
-        app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)
+        socketio.run(app, debug=False, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
     except KeyboardInterrupt:
         print("\n關閉應用...")
         predictor_service.stop_auto_update()
