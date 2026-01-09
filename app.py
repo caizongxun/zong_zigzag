@@ -17,7 +17,7 @@ from flask_cors import CORS
 import pandas as pd
 import numpy as np
 import pickle
-import json
+import json as json_lib
 import glob
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -35,14 +35,14 @@ try:
     YFINANCE_AVAILABLE = True
 except ImportError:
     YFINANCE_AVAILABLE = False
-    print("警告: yfinance 未安裝，部分功能不可用")
+    print("警告: yfinance 未安裝")
 
 try:
     from binance.client import Client
     BINANCE_AVAILABLE = True
 except ImportError:
     BINANCE_AVAILABLE = False
-    print("警告: binance-connector 未安裝，將使用 yfinance")
+    print("警告: python-binance 未安裝")
 
 app = Flask(__name__)
 CORS(app)
@@ -65,18 +65,21 @@ class RealTimePredictorService:
         self.history = []
         self.update_thread = None
         self.is_running = False
+        self.binance_client = None
+        
+        # 初始化 Binance 客戶端
+        if BINANCE_AVAILABLE:
+            try:
+                self.binance_client = Client()
+                print("✓ Binance 客戶端已初始化")
+            except:
+                print("⚠ Binance 客戶端初始化失敖")
         
         self.load_model()
     
     def load_model(self):
         """
         加載最新的模型
-        訓練流程会生成下面標籤準文件：
-        1. xgboost_model.joblib (joblib 格式)
-        2. xgboost_model.json (JSON 格式)
-        3. label_encoder.pkl
-        4. feature_names.json
-        5. params.json
         """
         try:
             model_dirs = glob.glob('models/*')
@@ -106,11 +109,11 @@ class RealTimePredictorService:
             
             # 加載特徵名稱
             with open(f'{model_dir}/feature_names.json', 'r') as f:
-                self.feature_names = json.load(f)
+                self.feature_names = json_lib.load(f)
             
             # 加載參數
             with open(f'{model_dir}/params.json', 'r') as f:
-                self.params = json.load(f)
+                self.params = json_lib.load(f)
             
             print(f"模型加載成功")
             print(f"  交易對: {self.params.get('pair', 'N/A')}")
@@ -119,20 +122,72 @@ class RealTimePredictorService:
             
             return True
         except Exception as e:
-            print(f"模型加載失敗: {str(e)}")
+            print(f"模型加載失敖: {str(e)}")
             import traceback
             traceback.print_exc()
             return False
     
-    def get_realtime_data(self, pair='BTCUSDT', interval='15m'):
+    def get_realtime_data_binance(self, pair='BTCUSDT', interval='15m'):
         """
-        獲取實時數據
-        使用 yfinance 或 Binance API
+        從 Binance 獲取實時數據 (API 官方)
+        """
+        try:
+            if not self.binance_client:
+                return None
+            
+            # 映射時間框架
+            interval_map = {
+                '15m': Client.KLINE_INTERVAL_15MINUTE,
+                '1h': Client.KLINE_INTERVAL_1HOUR,
+                '4h': Client.KLINE_INTERVAL_4HOUR,
+                '1d': Client.KLINE_INTERVAL_1DAY
+            }
+            
+            binance_interval = interval_map.get(interval, Client.KLINE_INTERVAL_15MINUTE)
+            
+            # 獲取最近 200 根 K 線 (最大上限)
+            klines = self.binance_client.get_klines(
+                symbol=pair,
+                interval=binance_interval,
+                limit=200
+            )
+            
+            if not klines:
+                print(f"煙 Binance 未獲取資料: {pair} {interval}")
+                return None
+            
+            # 轉換為 DataFrame
+            df = pd.DataFrame(klines, columns=[
+                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_asset_volume', 'number_of_trades',
+                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+            ])
+            
+            # 粗低篇正式轉換
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df['open'] = df['open'].astype(float)
+            df['high'] = df['high'].astype(float)
+            df['low'] = df['low'].astype(float)
+            df['close'] = df['close'].astype(float)
+            df['volume'] = df['volume'].astype(float)
+            
+            # 仅保留需要的欄
+            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+            
+            return df
+        
+        except Exception as e:
+            print(f"獲取 Binance 數據失敕: {str(e)}")
+            return None
+    
+    def get_realtime_data_yfinance(self, pair='BTCUSDT', interval='15m'):
+        """
+        從 yfinance 獲取實時數據 (備用方案)
         """
         try:
             # 符號轉換
             if pair == 'BTCUSDT':
-                symbol = 'BTC-USD'  # yfinance 格式
+                symbol = 'BTC-USD'
             else:
                 symbol = pair.replace('USDT', '-USD')
             
@@ -145,24 +200,40 @@ class RealTimePredictorService:
             }
             yf_interval = interval_map.get(interval, '15m')
             
-            # 獲取最近的數據
+            # 獲取数據
             df = yf.download(symbol, period='60d', interval=yf_interval, progress=False)
             
             if df.empty:
-                print(f"未能獲取 {pair} 的數據")
+                print(f"未能从yfinance獲取 {pair} 的數據")
                 return None
             
-            # 重命名列以符合期望的格式
+            # 重命名列
             df.columns = ['open', 'high', 'low', 'close', 'volume']
             df.index.name = 'timestamp'
             df = df.reset_index()
             
-            # 添加對應的 OHLCV 結構
             return df
         
         except Exception as e:
-            print(f"獲取數據失敕: {str(e)}")
+            print(f"獲取 yfinance 數據失敕: {str(e)}")
             return None
+    
+    def get_realtime_data(self, pair='BTCUSDT', interval='15m'):
+        """
+        獲取實時數據
+        選項: Binance (API) → yfinance (備用)
+        """
+        # 優先使用 Binance API
+        if BINANCE_AVAILABLE:
+            df = self.get_realtime_data_binance(pair, interval)
+            if df is not None:
+                return df
+        
+        # 詰依 yfinance
+        if YFINANCE_AVAILABLE:
+            return self.get_realtime_data_yfinance(pair, interval)
+        
+        return None
     
     def extract_zigzag_features(self, df):
         """
@@ -170,7 +241,6 @@ class RealTimePredictorService:
         基於最新的 K 棒數據
         """
         try:
-            # 簡化的特徵提取 (實際應使用完整的 feature_engineering.py)
             df = df.copy()
             
             # 基礎技術指標
@@ -245,7 +315,7 @@ class RealTimePredictorService:
             if df is None:
                 return {
                     'status': 'error',
-                    'message': '無法獲取市場數據'
+                    'message': '無法獲取市場數據 - 請検查網路連接'
                 }
             
             # 提取特徵
@@ -290,7 +360,6 @@ class RealTimePredictorService:
             confidence = float(np.max(y_pred_proba))
             
             # 判斷是否應該 HOLD
-            # 如果置信度低於 0.6，推薦 HOLD
             if confidence < 0.6:
                 signal = 'HOLD'
             else:
@@ -439,7 +508,9 @@ def health_check():
     return jsonify({
         'status': 'ok',
         'model_loaded': predictor_service.model is not None,
-        'latest_prediction': predictor_service.latest_prediction is not None
+        'latest_prediction': predictor_service.latest_prediction is not None,
+        'binance_available': BINANCE_AVAILABLE and predictor_service.binance_client is not None,
+        'yfinance_available': YFINANCE_AVAILABLE
     })
 
 
@@ -457,6 +528,7 @@ if __name__ == '__main__':
     print("="*60)
     print("訪問: http://localhost:5000")
     print("API: http://localhost:5000/api/latest")
+    print("模式Binance API 優先, yfinance 備用")
     print("="*60 + "\n")
     
     try:
