@@ -2,6 +2,7 @@
 """
 ZigZag 完整訓練管算
 一個文件包含：數據下載 → ZigZag提取 → 特徵工程 → 模型訓練
+支援批量訓練所有 22 個幣種
 """
 
 import pandas as pd
@@ -27,24 +28,45 @@ import joblib
 # 添加當前目錄到路徑
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# 22 個幣種
+ALL_PAIRS = [
+    'AAVEUSDT', 'ADAUSDT', 'ALGOUSDT', 'ARBUSDT', 'ATOMUSDT',
+    'AVAXUSDT', 'BCHUSDT', 'BNBUSDT', 'BTCUSDT', 'DOGEUSDT',
+    'DOTUSDT', 'ETCUSDT', 'ETHUSDT', 'FILUSDT', 'LINKUSDT',
+    'LTCUSDT', 'MATICUSDT', 'NEARUSDT', 'OPUSDT', 'SOLUSDT',
+    'UNIUSDT', 'XRPUSDT'
+]
+
+ALL_INTERVALS = ['15m', '1h']
+
 class CompletePipeline:
     """
     完整的 ZigZag 訓練管算
     一個文件包含：數據下載 → ZigZag提取 → 特徵工程 → 模型訓練
     """
     
-    def __init__(self, pair='BTCUSDT', interval='15m', depth=12, deviation=0.8, 
+    def __init__(self, pairs=None, interval='15m', depth=12, deviation=0.8, 
                  backstep=2, sample_size=1000):
         """
         參數說明：
-            pair (str): 交易對，如 'BTCUSDT', 'ETHUSDT' 或 'ALL' 訓練多對
-            interval (str): 時間框架，如 '15m', '1h', '4h', '1d' 或 'ALL' 訓練全部
+            pairs (list or str): 交易對，如 ['BTCUSDT', 'ETHUSDT']、'all' 訓練全部、'ALL' 訓練全部
+            interval (str): 時間框架，如 '15m', '1h' 等
             depth (int): ZigZag Depth 參數
             deviation (float): ZigZag Deviation 參數 (%)
             backstep (int): ZigZag Backstep 參數
-            sample_size (int): 使用的最近 N 條記錄數
+            sample_size (int): 使用的最近 N 条記錄数
         """
-        self.pair = pair
+        # 决定訓練的幣種
+        if isinstance(pairs, str):
+            if pairs.lower() in ['all', '*']:
+                self.pairs = ALL_PAIRS.copy()
+            else:
+                self.pairs = [pairs]
+        elif isinstance(pairs, list):
+            self.pairs = pairs
+        else:
+            self.pairs = ['BTCUSDT']
+        
         self.interval = interval
         self.depth = depth
         self.deviation = deviation
@@ -55,93 +77,66 @@ class CompletePipeline:
         os.makedirs('models', exist_ok=True)
         os.makedirs('results', exist_ok=True)
         os.makedirs('data_cache', exist_ok=True)
-    
-    def download_data(self):
-        """
-        第一步：下載数據
-        從 HuggingFace 下載加密貨幣 OHLCV 数據
-        """
-        print("="*60)
-        print("步驟 1/4: 下載数據")
-        print("="*60)
         
+        # 訓練統計
+        self.train_results = []
+    
+    def download_data(self, pair):
+        """
+        第一步：下載數據
+        從 HuggingFace 下載加密貨幣 OHLCV 數據
+        """
         try:
             import requests
             from io import BytesIO
         except ImportError:
-            print("安裝必要的包...")
+            print("  安裝必要的包...")
             os.system('pip install requests -q')
             import requests
             from io import BytesIO
         
-        # 定義交易對和時間框架
-        if self.pair == 'ALL':
-            pairs = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'XRPUSDT']
-        else:
-            pairs = [self.pair]
+        print(f"\n下載 {pair} {self.interval}...")
         
-        if self.interval == 'ALL':
-            intervals = ['15m', '1h', '4h']
-        else:
-            intervals = [self.interval]
+        # 提取幣種符號（去掉 USDT 後綴）
+        symbol = pair.replace('USDT', '')
         
-        all_data = []
+        # HuggingFace 正確 URL 結構
+        hf_url = f"https://huggingface.co/datasets/zongowo111/v2-crypto-ohlcv-data/resolve/main/klines/{pair}/{symbol}_{self.interval}.parquet"
         
-        for pair in pairs:
-            for interval in intervals:
-                print(f"\n下載 {pair} {interval}...")
-                
-                # 提取幣種符號（去掉 USDT）
-                symbol = pair.replace('USDT', '')
-                
-                # HuggingFace 正確 URL 結構
-                hf_url = f"https://huggingface.co/datasets/zongowo111/v2-crypto-ohlcv-data/resolve/main/klines/{pair}/{symbol}_{interval}.parquet"
-                
-                try:
-                    print(f"  URL: {hf_url}")
-                    response = requests.get(hf_url, timeout=30)
-                    
-                    if response.status_code == 200:
-                        df = pd.read_parquet(BytesIO(response.content))
-                        df['pair'] = pair
-                        df['interval'] = interval
-                        all_data.append(df)
-                        print(f"  ✓ 成功下載 {len(df):,} 條記錄")
-                    else:
-                        print(f"  ✗ HTTP 狀態碼: {response.status_code}")
-                
-                except Exception as e:
-                    print(f"  ✗ 下載失敖: {str(e)}")
-        
-        if all_data:
-            df = pd.concat(all_data, ignore_index=True)
-            print(f"\n✓ 總共下載 {len(df):,} 條記錄")
+        try:
+            response = requests.get(hf_url, timeout=30)
             
-            # 使用最近的樣本數
-            if len(df) > self.sample_size:
-                df = df.tail(self.sample_size).reset_index(drop=True)
-                print(f"使用最近 {self.sample_size:,} 條記錄")
-            
-            df.to_csv('data_cache/raw_data.csv', index=False)
-            return df
-        else:
-            # 備用方案：生成模擬數據用於演示
-            print("\n警告：無法下載實際數據，使用模擬數據進行演示...")
-            return self._generate_sample_data()
+            if response.status_code == 200:
+                df = pd.read_parquet(BytesIO(response.content))
+                
+                # 使用最近的樣本數
+                if len(df) > self.sample_size:
+                    df = df.tail(self.sample_size).reset_index(drop=True)
+                
+                print(f"  ✓ 成功下載 {len(df):,} 條記錄")
+                return df
+            else:
+                print(f"  × HTTP 狀態碼: {response.status_code}")
+                return None
+        
+        except Exception as e:
+            print(f"  × 下載失敖: {str(e)[:50]}")
+            return None
     
-    def _generate_sample_data(self):
+    def _generate_sample_data(self, pair):
         """
         生成模擬數據用於演示
         """
-        np.random.seed(42)
+        np.random.seed(hash(pair) % 2**32)
         n_records = self.sample_size
         
         # 生成時間序列
-        dates = pd.date_range(end=datetime.now(), periods=n_records, freq='15min')
+        dates = pd.date_range(end=datetime.now(), periods=n_records, freq=self.interval)
         
         # 生成價格數據（帶趨勢和隨機性）
         n = np.arange(n_records)
-        trend = 40000 + 0.1 * n
+        base_price = 40000 if pair == 'BTCUSDT' else 2000
+        trend = base_price + 0.1 * n
         noise = np.random.randn(n_records) * 200
         close = trend + noise
         
@@ -159,66 +154,33 @@ class CompletePipeline:
         df = df[df['high'] >= df['close']].reset_index(drop=True)
         df = df[df['low'] <= df['close']].reset_index(drop=True)
         
-        df['pair'] = self.pair if self.pair != 'ALL' else 'BTCUSDT'
-        df['interval'] = self.interval if self.interval != 'ALL' else '15m'
-        
-        print(f"\n✓ 生成 {len(df):,} 條模擬數據")
-        df.to_csv('data_cache/raw_data.csv', index=False)
+        print(f"  ✓ 生成 {len(df):,} 條模擬數據")
         return df
     
-    def extract_zigzag(self, df):
+    def extract_zigzag(self, df, pair):
         """
         第二步：提取 ZigZag 轉折點
         """
-        print("\n" + "="*60)
-        print("步驟 2/4: 提取 ZigZag 轉折點")
-        print("="*60)
-        
         # 導入或定義 ZigZag 指標
         try:
             from zigzag_indicator import ZigZagIndicator
         except ImportError:
-            print("\n使用內置 ZigZag 實現...")
             ZigZagIndicator = self._get_zigzag_class()
         
-        # 按組分別提取 ZigZag
-        zigzag_results = []
+        print(f"  提取 ZigZag...")
         
-        if 'pair' in df.columns and 'interval' in df.columns:
-            groups = df.groupby(['pair', 'interval'])
-            for (pair, interval), group_df in groups:
-                print(f"\n處理組：{pair} {interval}")
-                data = group_df.copy().reset_index(drop=True)
-                
-                zz = ZigZagIndicator(
-                    depth=self.depth,
-                    deviation=self.deviation,
-                    backstep=self.backstep
-                )
-                
-                result = zz.extract(data)
-                zigzag_results.append(result)
-                
-                pivot_count = result['swing_type'].notna().sum()
-                print(f"  轉折點: {pivot_count} 個 ({pivot_count/len(result)*100:.2f}%)")
-        else:
-            print(f"\n處理組：{self.pair} {self.interval}")
-            zz = ZigZagIndicator(
-                depth=self.depth,
-                deviation=self.deviation,
-                backstep=self.backstep
-            )
-            result = zz.extract(df)
-            zigzag_results.append(result)
-            
-            pivot_count = result['swing_type'].notna().sum()
-            print(f"  轉折點: {pivot_count} 個 ({pivot_count/len(result)*100:.2f}%)")
+        zz = ZigZagIndicator(
+            depth=self.depth,
+            deviation=self.deviation,
+            backstep=self.backstep
+        )
         
-        df_zigzag = pd.concat(zigzag_results, ignore_index=True) if zigzag_results else df
-        df_zigzag.to_csv('data_cache/zigzag_result.csv', index=False)
+        result = zz.extract(df)
         
-        print(f"\n✓ 總轉折點: {df_zigzag['swing_type'].notna().sum()} 個")
-        return df_zigzag
+        pivot_count = result['swing_type'].notna().sum()
+        print(f"  ✓ 轉折點: {pivot_count} 個 ({pivot_count/len(result)*100:.2f}%)")
+        
+        return result
     
     def _get_zigzag_class(self):
         """
@@ -238,9 +200,9 @@ class CompletePipeline:
                 highs = df['high'].values
                 lows = df['low'].values
                 
-                # 簡化實現：盤接標記局部高低點
+                # 简化實現：盤接標記局點高低點
                 for i in range(self.depth, len(df) - self.depth):
-                    # 局部高點
+                    # 局點高點
                     if highs[i] == highs[max(0, i-self.depth):i+self.depth+1].max():
                         df.loc[i, 'zigzag'] = highs[i]
                         
@@ -254,7 +216,7 @@ class CompletePipeline:
                                 else:
                                     df.loc[i, 'swing_type'] = 'LH'  # 更低高點
                     
-                    # 局部低點
+                    # 局點低點
                     elif lows[i] == lows[max(0, i-self.depth):i+self.depth+1].min():
                         df.loc[i, 'zigzag'] = lows[i]
                         
@@ -276,19 +238,12 @@ class CompletePipeline:
         """
         第三步：特徵工程
         """
-        print("\n" + "="*60)
-        print("步驟 3/4: 特徵工程")
-        print("="*60)
-        
         try:
             from feature_engineering import ZigZagFeatureEngineering
             fe = ZigZagFeatureEngineering(lookback_windows=[5, 10, 20, 50])
-            df_features = fe.create_features(df, verbose=True)
+            df_features = fe.create_features(df, verbose=False)
         except ImportError:
-            print("\n使用基礎特徵工程...")
             df_features = self._basic_feature_engineering(df)
-        
-        df_features.to_csv('data_cache/features.csv', index=False)
         
         return df_features
     
@@ -308,7 +263,6 @@ class CompletePipeline:
         # 填充缺失值
         df = df.fillna(method='bfill').fillna(method='ffill')
         
-        print(f"\n✓ 生成 {df.shape[1]} 個特徵")
         return df
     
     def _calculate_rsi(self, prices, period=14):
@@ -340,44 +294,45 @@ class CompletePipeline:
         
         return rsi
     
-    def train_models(self, df_features):
+    def train_models(self, df_features, pair):
         """
         第四步：訓練模型
         """
-        print("\n" + "="*60)
-        print("步驟 4/4: 訓練模型")
-        print("="*60)
-        
         try:
             from feature_engineering import prepare_ml_dataset
             X_train, X_test, y_train, y_test, feature_names, label_encoder = prepare_ml_dataset(
-                df_features, test_size=0.2, verbose=True
+                df_features, test_size=0.2, verbose=False
             )
         except ImportError:
-            print("\n使用基礎數據準備...")
             X_train, X_test, y_train, y_test, feature_names, label_encoder = self._basic_prepare_data(df_features)
         
         # 驗證數據
-        print(f"\n訓練集: {len(X_train)} | 測試集: {len(X_test)}")
+        if len(X_train) < 10 or len(X_test) < 3:
+            print(f"  × 數據不足以訓練")
+            return None
         
         # 訓練 XGBoost
-        print("\n訓練 XGBoost...")
+        print(f"  訓練 XGBoost...")
         xgb_model = self._train_xgboost(X_train, y_train, X_test, y_test, label_encoder)
         
         # 評估
-        print("\n評估模型...")
         xgb_pred = xgb_model.predict(X_test)
         xgb_acc = accuracy_score(y_test, xgb_pred)
-        xgb_f1 = f1_score(y_test, xgb_pred, average='weighted')
+        xgb_f1 = f1_score(y_test, xgb_pred, average='weighted', zero_division=0)
         
-        print(f"\nXGBoost 性能:")
-        print(f"  準確率: {xgb_acc:.4f}")
-        print(f"  F1 Score: {xgb_f1:.4f}")
+        print(f"  ✓ 準確率: {xgb_acc:.4f} | F1: {xgb_f1:.4f}")
         
         # 保存模型
-        self._save_models(xgb_model, None, StandardScaler(), label_encoder, feature_names)
+        model_dir = self._save_models(xgb_model, StandardScaler(), label_encoder, feature_names, pair)
         
-        return True
+        return {
+            'pair': pair,
+            'interval': self.interval,
+            'accuracy': xgb_acc,
+            'f1_score': xgb_f1,
+            'train_samples': len(X_train),
+            'model_dir': model_dir
+        }
     
     def _basic_prepare_data(self, df):
         """
@@ -393,26 +348,22 @@ class CompletePipeline:
         label_col = 'swing_type' if 'swing_type' in df.columns else None
         
         if label_col is None:
-            # 沒有標籤，生成虷嘉標籤
             df['swing_type'] = 'HH'
             label_col = 'swing_type'
         
-        # 移除只有虷嘉標籤的行
+        # 移除空標籤的行
         df = df[df[label_col] != '']
         
         if len(df) == 0:
-            # 生成虷嘉數據
             n = 100
             X = np.random.randn(n, 10)
             y = np.random.randint(0, 4, n)
             feature_names = [f'feature_{i}' for i in range(10)]
         else:
-            # 選擇數值列作為特徵
             feature_cols = df.select_dtypes(include=[np.number]).columns.tolist()
             feature_cols = [c for c in feature_cols if c not in ['timestamp', 'pair', 'interval']]
             
             if len(feature_cols) < 5:
-                # 不足特徵，生成虷嘉特徵
                 n = len(df)
                 X = np.random.randn(n, 10)
                 feature_names = [f'feature_{i}' for i in range(10)]
@@ -420,7 +371,6 @@ class CompletePipeline:
                 X = df[feature_cols].values
                 feature_names = feature_cols
             
-            # 編碼標籤
             le = LabelEncoder()
             y = le.fit_transform(df[label_col])
         
@@ -429,11 +379,8 @@ class CompletePipeline:
             X, y, test_size=0.2, random_state=42
         )
         
-        # 標籤編碼器
         le = LabelEncoder()
         le.fit(y)
-        
-        print(f"特徵數: {X.shape[1]} | 樣本數: {len(X)} | 類別數: {len(le.classes_)}")
         
         return X_train, X_test, y_train, y_test, feature_names, le
     
@@ -452,7 +399,6 @@ class CompletePipeline:
             'random_state': 42,
             'tree_method': 'hist',
             'eval_metric': 'mlogloss',
-            'early_stopping_rounds': 10
         }
         
         model = xgb.XGBClassifier(**params)
@@ -464,44 +410,43 @@ class CompletePipeline:
         
         return model
     
-    def _save_models(self, xgb_model, lstm_model, scaler, label_encoder, feature_names):
+    def _save_models(self, xgb_model, scaler, label_encoder, feature_names, pair):
         """
-        保存模型
-        使用 joblib 保存 XGBoost 以適應新版 API
+        保存模型 - 結構化存放
+        models/
+          BTCUSDT/
+            15m/
+              model_20260109_150000/
+                xgboost_model.joblib
+                label_encoder.pkl
+                feature_names.json
+                params.json
+            1h/
+              ...
+          ETHUSDT/
+            ...
         """
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        model_dir = f"models/{self.pair}_{self.interval}_{timestamp}"
+        model_dir = f"models/{pair}/{self.interval}/model_{timestamp}"
         os.makedirs(model_dir, exist_ok=True)
         
-        # 保存 XGBoost (使用 joblib 以適應 XGBoost 3.1.2)
+        # 保存 XGBoost
         try:
-            # 方案 1: 使用 joblib
             joblib.dump(xgb_model, f'{model_dir}/xgboost_model.joblib')
-            print(f"✓ XGBoost: {model_dir}/xgboost_model.joblib")
         except Exception as e:
-            print(f"⚠ joblib 保存失敖：{e}")
-            try:
-                # 方案 2: 使用 XGBoost 的口叨標浜法
-                model_json = xgb_model.get_booster().save_raw('json')
-                with open(f'{model_dir}/xgboost_model.json', 'w') as f:
-                    f.write(model_json)
-                print(f"✓ XGBoost: {model_dir}/xgboost_model.json")
-            except Exception as e2:
-                print(f"⚠ JSON 保存也失敖：{e2}")
+            print(f"  ⚠ joblib 保存失敖：{e}")
         
         # 保存標籤編碼器
         with open(f'{model_dir}/label_encoder.pkl', 'wb') as f:
             pickle.dump(label_encoder, f)
-        print(f"✓ Label Encoder: {model_dir}/label_encoder.pkl")
         
         # 保存特徵名稱
         with open(f'{model_dir}/feature_names.json', 'w') as f:
             json_lib.dump(feature_names, f, indent=2)
-        print(f"✓ 特徵名稱: {model_dir}/feature_names.json")
         
         # 保存參數
         params = {
-            'pair': self.pair,
+            'pair': pair,
             'interval': self.interval,
             'depth': self.depth,
             'deviation': self.deviation,
@@ -511,93 +456,142 @@ class CompletePipeline:
         }
         with open(f'{model_dir}/params.json', 'w') as f:
             json_lib.dump(params, f, indent=2)
-        print(f"✓ 參數: {model_dir}/params.json")
         
-        print(f"\n✓ 所有模型已保存至: {model_dir}")
+        return model_dir
     
     def run(self):
         """
         執行完整管算
         """
-        print("\n" + "#"*60)
-        print("# ZigZag 完整訓練管算")
-        print("#"*60)
+        print("\n" + "#"*70)
+        print("# ZigZag 完整訓練管算 (支援批量)")
+        print("#"*70)
         print(f"\n配置:")
-        print(f"  幣種: {self.pair}")
+        print(f"  幣種: {', '.join(self.pairs)} ({len(self.pairs)} 個)")
         print(f"  時間框架: {self.interval}")
         print(f"  ZigZag Depth: {self.depth}")
         print(f"  ZigZag Deviation: {self.deviation}%")
         print(f"  ZigZag Backstep: {self.backstep}")
         print(f"  樣本數: {self.sample_size}")
+        print(f"  总模型数: {len(self.pairs)}")
         print()
         
         start_time = datetime.now()
         
-        try:
-            # 步驟 1: 下載数據
-            df = self.download_data()
+        for idx, pair in enumerate(self.pairs, 1):
+            print("\n" + "="*70)
+            print(f"[{idx}/{len(self.pairs)}] 訓練 {pair}")
+            print("="*70)
             
-            # 步驟 2: 提取 ZigZag
-            df_zigzag = self.extract_zigzag(df)
+            try:
+                # 步驟 1: 下載數據
+                df = self.download_data(pair)
+                if df is None:
+                    df = self._generate_sample_data(pair)
+                
+                # 步驟 2: 提取 ZigZag
+                df_zigzag = self.extract_zigzag(df, pair)
+                
+                # 步驟 3: 特徵工程
+                df_features = self.feature_engineering(df_zigzag)
+                
+                # 步驟 4: 訓練模型
+                result = self.train_models(df_features, pair)
+                if result:
+                    self.train_results.append(result)
+                    print(f"\n  ✓ {pair} 訓練完成")
+                    print(f"    模型位置: {result['model_dir']}")
             
-            # 步驟 3: 特徵工程
-            df_features = self.feature_engineering(df_zigzag)
-            
-            # 步驟 4: 訓練模型
-            success = self.train_models(df_features)
-            
-            if success:
-                elapsed = (datetime.now() - start_time).total_seconds()
-                print("\n" + "#"*60)
-                print(f"# ✓ 訓練完成 (耗時 {elapsed:.1f} 秒)")
-                print("#"*60)
-            
-        except Exception as e:
-            print(f"\n✗ 錯誤: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return False
+            except Exception as e:
+                print(f"  × 錯誤: {str(e)[:100]}")
         
-        return True
+        # 一覽統計
+        elapsed = (datetime.now() - start_time).total_seconds()
+        
+        print("\n" + "#"*70)
+        print("# 訓練統計")
+        print("#"*70)
+        print(f"\n訊拫:")
+        print(f"  成功: {len(self.train_results)}/{len(self.pairs)}")
+        print(f"  耗時: {elapsed:.1f} 秒 ({elapsed/60:.1f} 分鐘)")
+        
+        if self.train_results:
+            print(f"\n模型結果:")
+            print(f"{'Pair':<12} {'Interval':<8} {'Accuracy':<10} {'F1 Score':<10} {'Samples':<10}")
+            print("-" * 50)
+            
+            accuracies = []
+            f1_scores = []
+            
+            for result in self.train_results:
+                print(f"{result['pair']:<12} {result['interval']:<8} "
+                      f"{result['accuracy']:<10.4f} {result['f1_score']:<10.4f} "
+                      f"{result['train_samples']:<10}")
+                accuracies.append(result['accuracy'])
+                f1_scores.append(result['f1_score'])
+            
+            print("-" * 50)
+            avg_acc = np.mean(accuracies)
+            avg_f1 = np.mean(f1_scores)
+            max_acc = np.max(accuracies)
+            min_acc = np.min(accuracies)
+            
+            print(f"{'Average':<12} {'':<8} {avg_acc:<10.4f} {avg_f1:<10.4f}")
+            print(f"{'Max/Min':<12} {'':<8} {max_acc:<10.4f}/{min_acc:<10.4f}")
+        
+        print("\n" + "#"*70)
+        print("# ✓ 訓練完成!")
+        print("#"*70 + "\n")
+        
+        return len(self.train_results) > 0
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description='ZigZag 完整訓練管算',
+        description='ZigZag 完整訓練管算 (支援批量)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 示例：
-  # 單幣種單時間框架
-  python train_complete_pipeline.py --pair BTCUSDT --interval 15m --depth 12 --deviation 0.8 --backstep 2 --sample 1000
+  # 第一個幣種、单時間框架
+  python train_complete_pipeline.py --pair BTCUSDT --interval 15m --depth 12 --deviation 0.8 --backstep 2 --sample 200000
   
-  # 多幣種
-  python train_complete_pipeline.py --pair ALL --interval 15m --depth 12 --deviation 0.8 --backstep 2 --sample 1000
+  # 多個幣種
+  python train_complete_pipeline.py --pair BTCUSDT ETHUSDT BNBUSDT --interval 15m --depth 12 --deviation 0.8 --backstep 2 --sample 200000
   
-  # 多時間框架
-  python train_complete_pipeline.py --pair BTCUSDT --interval ALL --depth 12 --deviation 0.8 --backstep 2 --sample 1000
+  # 所有幣種
+  python train_complete_pipeline.py --pair all --interval 15m --depth 12 --deviation 0.8 --backstep 2 --sample 200000
   
-  # 全部組合
-  python train_complete_pipeline.py --pair ALL --interval ALL --depth 12 --deviation 0.8 --backstep 2 --sample 1000
+  # 所有幣種 + 兩個時間框架
+  python train_complete_pipeline.py --pair all --interval 15m 1h --depth 12 --deviation 0.8 --backstep 2 --sample 200000
         '''
     )
     
-    parser.add_argument('--pair', type=str, default='BTCUSDT',
-                        help='交易對: BTCUSDT, ETHUSDT, BNBUSDT 或 ALL (預設: BTCUSDT)')
+    parser.add_argument('--pair', nargs='+', default=['BTCUSDT'],
+                        help='交易對: BTCUSDT, ETHUSDT 或 all/ALL/\* 訓練全部 (預設: BTCUSDT)')
     parser.add_argument('--interval', type=str, default='15m',
-                        help='時間框架: 15m, 1h, 4h, 1d 或 ALL (預設: 15m)')
+                        help='時間框架: 15m 或 1h (預設: 15m)')
     parser.add_argument('--depth', type=int, default=12,
                         help='ZigZag Depth 參數 (預設: 12)')
     parser.add_argument('--deviation', type=float, default=0.8,
                         help='ZigZag Deviation 參數 (%) (預設: 0.8)')
     parser.add_argument('--backstep', type=int, default=2,
                         help='ZigZag Backstep 參數 (預設: 2)')
-    parser.add_argument('--sample', type=int, default=1000,
-                        help='使用的樣本數 (預設: 1000)')
+    parser.add_argument('--sample', type=int, default=200000,
+                        help='使用的樣本數 (預設: 200000)')
     
     args = parser.parse_args()
     
+    # 處理 --pair 參數
+    if isinstance(args.pair, list):
+        if len(args.pair) == 1:
+            pair_arg = args.pair[0]
+        else:
+            pair_arg = args.pair
+    else:
+        pair_arg = args.pair
+    
     pipeline = CompletePipeline(
-        pair=args.pair,
+        pairs=pair_arg,
         interval=args.interval,
         depth=args.depth,
         deviation=args.deviation,
