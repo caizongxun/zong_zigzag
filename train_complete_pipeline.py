@@ -52,6 +52,7 @@ class CompletePipeline:
     def download_data(self):
         """
         第一步：下載數據
+        從 HuggingFace 下載加密貨幣 OHLCV 數據
         """
         print("="*60)
         print("步驟 1/4: 下載數據")
@@ -66,13 +67,12 @@ class CompletePipeline:
             import requests
             from io import BytesIO
         
-        # 支援的幣種
+        # 定義交易對和時間框架
         if self.pair == 'ALL':
-            pairs = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT']
+            pairs = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'XRPUSDT']
         else:
             pairs = [self.pair]
         
-        # 支援的時間框架
         if self.interval == 'ALL':
             intervals = ['15m', '1h', '4h']
         else:
@@ -84,35 +84,27 @@ class CompletePipeline:
             for interval in intervals:
                 print(f"\n下載 {pair} {interval}...")
                 
+                # 提取幣種符號（去掉 USDT）
+                symbol = pair.replace('USDT', '')
+                
+                # HuggingFace 正確 URL 結構
+                hf_url = f"https://huggingface.co/datasets/zongowo111/v2-crypto-ohlcv-data/resolve/main/klines/{pair}/{symbol}_{interval}.parquet"
+                
                 try:
-                    # 嘗試多個數據源
-                    urls = [
-                        # 主要源
-                        f"https://huggingface.co/datasets/zongowo111/v2-crypto-ohlcv-data/resolve/main/klines/{pair.replace('USDT', '')}/{pair.split('USDT')[0]}_{interval}.parquet",
-                        # 備用源
-                        f"https://huggingface.co/datasets/zongowo111/crypto-ohlcv/resolve/main/{pair}/{interval}.parquet",
-                    ]
+                    print(f"  URL: {hf_url}")
+                    response = requests.get(hf_url, timeout=30)
                     
-                    downloaded = False
-                    for url in urls:
-                        try:
-                            response = requests.get(url, timeout=30)
-                            if response.status_code == 200:
-                                df = pd.read_parquet(BytesIO(response.content))
-                                df['pair'] = pair
-                                df['interval'] = interval
-                                all_data.append(df)
-                                print(f"✓ 成功下載 {len(df):,} 條記錄")
-                                downloaded = True
-                                break
-                        except Exception as e:
-                            continue
-                    
-                    if not downloaded:
-                        print(f"✗ 無法從任何源下載 {pair} {interval}")
+                    if response.status_code == 200:
+                        df = pd.read_parquet(BytesIO(response.content))
+                        df['pair'] = pair
+                        df['interval'] = interval
+                        all_data.append(df)
+                        print(f"  ✓ 成功下載 {len(df):,} 條記錄")
+                    else:
+                        print(f"  ✗ HTTP 狀態碼: {response.status_code}")
                 
                 except Exception as e:
-                    print(f"✗ 下載失敗: {str(e)}")
+                    print(f"  ✗ 下載失敗: {str(e)}")
         
         if all_data:
             df = pd.concat(all_data, ignore_index=True)
@@ -126,7 +118,7 @@ class CompletePipeline:
             df.to_csv('data_cache/raw_data.csv', index=False)
             return df
         else:
-            # 備用方案：生成模擬數據用於測試
+            # 備用方案：生成模擬數據用於演示
             print("\n警告：無法下載實際數據，使用模擬數據進行演示...")
             return self._generate_sample_data()
     
