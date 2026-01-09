@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-ZigZag 實時預測 API 後端
+ZigZag 實時預測 API 例端
 Flask 應用，提供實時市場數據和模型預測
+支援光端選擇幣種和時間框架
 
 啟動方法：
   python app.py
 
 API 端點：
+  GET /api/pairs - 獲取全部可用幣種
+  GET /api/available-models - 獲取可用模型
+  POST /api/load-model - 加載模型
   GET /api/latest - 獲取最新預測
   GET /api/history - 獲取歷史數據
+  POST /api/predict - 觸發預測
   GET /api/config - 獲取配置信息
 """
 
@@ -47,10 +52,20 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
+# 22 個支持的幣種
+AVAILABLE_PAIRS = [
+    'AAVEUSDT', 'ADAUSDT', 'ALGOUSDT', 'ARBUSDT', 'ATOMUSDT',
+    'AVAXUSDT', 'BCHUSDT', 'BNBUSDT', 'BTCUSDT', 'DOGEUSDT',
+    'DOTUSDT', 'ETCUSDT', 'ETHUSDT', 'FILUSDT', 'LINKUSDT',
+    'LTCUSDT', 'MATICUSDT', 'NEARUSDT', 'OPUSDT', 'SOLUSDT',
+    'UNIUSDT', 'XRPUSDT'
+]
+
+AVAILABLE_INTERVALS = ['15m', '1h']
 
 def convert_to_python_types(obj):
     """
-    遞輸会諮 NumPy 類型離轉換為 Python 粗來類型
+    遞歸會診 NumPy 類形離义轉換為 Python 粗來類形
     目程是 JSON 序列化
     """
     if isinstance(obj, dict):
@@ -87,6 +102,8 @@ class RealTimePredictorService:
         self.update_thread = None
         self.is_running = False
         self.binance_client = None
+        self.current_pair = 'BTCUSDT'
+        self.current_interval = '15m'
         
         # 初始化 Binance 客戶端
         if BINANCE_AVAILABLE:
@@ -98,20 +115,53 @@ class RealTimePredictorService:
         
         self.load_model()
     
-    def load_model(self):
+    def get_available_models(self):
         """
-        加載最新的模型
+        獲取所有可用模型
+        返回格式: {pair: {interval: model_path}}
+        """
+        models = {}
+        
+        # 掃描 models 目錄
+        pair_dirs = glob.glob('models/*')
+        for pair_dir in pair_dirs:
+            pair_name = Path(pair_dir).name
+            interval_dirs = glob.glob(f'{pair_dir}/*')
+            
+            models[pair_name] = {}
+            for interval_dir in interval_dirs:
+                interval_name = Path(interval_dir).name
+                model_dirs = glob.glob(f'{interval_dir}/model_*')
+                
+                if model_dirs:
+                    # 取最新的模型
+                    latest_model = max(model_dirs, key=lambda x: Path(x).stat().st_mtime)
+                    models[pair_name][interval_name] = latest_model
+        
+        return models
+    
+    def load_model(self, pair='BTCUSDT', interval='15m'):
+        """
+        加載指定幣種和時間框架的模型
         """
         try:
-            model_dirs = glob.glob('models/*')
+            # 這一實數据幫下模型目錄
+            model_path = f'models/{pair}/{interval}'
+            
+            if not Path(model_path).exists():
+                print(f"模型目錄不存在: {model_path}")
+                return False
+            
+            # 取最新的模型
+            model_dirs = glob.glob(f'{model_path}/model_*')
             if not model_dirs:
-                print("未找到模型目錄")
+                print(f"何找到模型檔案: {model_path}")
                 return False
             
             model_dir = max(model_dirs, key=lambda x: Path(x).stat().st_mtime)
             print(f"加載模型: {model_dir}")
             
-            # 優先嘗試 joblib 格式
+            # 儯先嘗試 joblib 格式
             if Path(f'{model_dir}/xgboost_model.joblib').exists():
                 print("  使用 joblib 格式...")
                 self.model = joblib.load(f'{model_dir}/xgboost_model.joblib')
@@ -121,7 +171,7 @@ class RealTimePredictorService:
                 self.model = xgb.XGBClassifier()
                 self.model.load_model(f'{model_dir}/xgboost_model.json')
             else:
-                print("未找到模型檔案")
+                print("何找到模型檔案")
                 return False
             
             # 加載標籤編碼器
@@ -136,11 +186,13 @@ class RealTimePredictorService:
             with open(f'{model_dir}/params.json', 'r') as f:
                 self.params = json_lib.load(f)
             
+            self.current_pair = pair
+            self.current_interval = interval
+            
             print(f"模型加載成功")
             print(f"  交易對: {self.params.get('pair', 'N/A')}")
             print(f"  時間框架: {self.params.get('interval', 'N/A')}")
             print(f"  特徵數: {len(self.feature_names)}")
-            print(f"  特徵名稱: {self.feature_names}")
             
             return True
         except Exception as e:
@@ -175,7 +227,7 @@ class RealTimePredictorService:
             )
             
             if not klines:
-                print(f"煙 Binance 未獲取數據: {pair} {interval}")
+                print(f"⚠ Binance 未獲取數據: {pair} {interval}")
                 return None
             
             # 轉換為 DataFrame
@@ -199,7 +251,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"獲取 Binance 數據失敗: {str(e)}")
+            print(f"獲取 Binance 數據失敖: {str(e)}")
             return None
     
     def get_realtime_data_yfinance(self, pair='BTCUSDT', interval='15m'):
@@ -217,7 +269,7 @@ class RealTimePredictorService:
             interval_map = {
                 '15m': '15m',
                 '1h': '1h',
-                '4h': '1h',  # yfinance 最小粒度
+                '4h': '1h',
                 '1d': '1d'
             }
             yf_interval = interval_map.get(interval, '15m')
@@ -226,10 +278,10 @@ class RealTimePredictorService:
             df = yf.download(symbol, period='60d', interval=yf_interval, progress=False)
             
             if df.empty:
-                print(f"未能從yfinance獲取 {pair} 的數據")
+                print(f"未能從 yfinance 獲取 {pair} 的數據")
                 return None
             
-            # 重命名列
+            # 重命名欄
             df.columns = ['open', 'high', 'low', 'close', 'volume']
             df.index.name = 'timestamp'
             df = df.reset_index()
@@ -237,7 +289,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"獲取 yfinance 數據失敕: {str(e)}")
+            print(f"獲取 yfinance 數據失敖: {str(e)}")
             return None
     
     def get_realtime_data(self, pair='BTCUSDT', interval='15m'):
@@ -245,13 +297,13 @@ class RealTimePredictorService:
         獲取實時數據
         選項: Binance (API) → yfinance (備用)
         """
-        # 優先使用 Binance API
+        # 儯先使用 Binance API
         if BINANCE_AVAILABLE:
             df = self.get_realtime_data_binance(pair, interval)
             if df is not None:
                 return df
         
-        # 撤依 yfinance
+        # 撤伊 yfinance
         if YFINANCE_AVAILABLE:
             return self.get_realtime_data_yfinance(pair, interval)
         
@@ -259,15 +311,15 @@ class RealTimePredictorService:
     
     def _zigzag_points(self, prices, depth=12, deviation=0.8):
         """
-        简单 ZigZag 轉折點計算
-        返回轉折點位置的布林陣列
+        简單 ZigZag 轉折點計算
+        返回轉折點位置的布林陳列
         """
         if len(prices) < depth * 2:
             return np.zeros(len(prices))
         
         # 計算 ZigZag
         zz = np.zeros(len(prices))
-        trend = 0  # 1: 上升, -1: 下降
+        trend = 0  # 1: 上下, -1: 下下
         pivot_idx = 0
         pivot_price = prices.iloc[0]
         
@@ -276,7 +328,7 @@ class RealTimePredictorService:
             high_window = prices.iloc[i:i+depth].max()
             low_window = prices.iloc[i:i+depth].min()
             
-            # 計算偏差百分比
+            # 計算偽差百分比
             if pivot_price > 0:
                 deviation_pct = abs(current - pivot_price) / pivot_price * 100
             else:
@@ -289,13 +341,13 @@ class RealTimePredictorService:
                 else:
                     trend = -1
             elif trend == 1 and current < pivot_price * (1 - deviation / 100):
-                # 上升轉下降
+                # 上下轉下下
                 trend = -1
                 zz[pivot_idx] = 1  # 標記高點
                 pivot_idx = i
                 pivot_price = current
             elif trend == -1 and current > pivot_price * (1 + deviation / 100):
-                # 下降轉上升
+                # 下下轉上下
                 trend = 1
                 zz[pivot_idx] = -1  # 標記低點
                 pivot_idx = i
@@ -306,7 +358,7 @@ class RealTimePredictorService:
     def extract_zigzag_features(self, df):
         """
         提取 ZigZag 特徵
-        基於最新的 K 棒數據
+        基於最新的 K 棊數據
         
         為保證輸出特徵數量為 11：
         - open
@@ -402,7 +454,7 @@ class RealTimePredictorService:
                     'message': '特徵提取失敖'
                 }
             
-            # 獲取最新的 K 棒
+            # 獲取最新的 K 棊
             latest_row = df_features.iloc[-1]
             self.latest_ohlcv = {
                 'timestamp': str(latest_row['timestamp']),
@@ -413,24 +465,24 @@ class RealTimePredictorService:
                 'volume': float(latest_row['volume']) if pd.notna(latest_row['volume']) else 0
             }
             
-            # 準備特徵向量 - 按照模型訓練時的順序
+            # 準備特徵橢量 - 按照模型訓練時的順序
             feature_cols = [col for col in self.feature_names if col in df_features.columns]
             
-            # 外突紀風鍠: 有五個特徵沒有對應的欄
+            # 剪槍記風黱: 有五個特徵沒有對應的欄
             missing_features = [f for f in self.feature_names if f not in df_features.columns]
             if missing_features:
-                print(f"警告: 特徵 {missing_features} 不存在整個數據桂典中")
+                print(f"警告: 特徵 {missing_features} 不存在整個數據褒藤中")
             
-            # 按照預測標整序提取
+            # 按照預測標整順溏提取
             X_raw = df_features.iloc[-1:][feature_cols].values
             
-            # 如果特徵數量不符，沒有合適的特徵就填 0
+            # 如果特徵數量不灆，沒有適當的特徵就填 0
             if X_raw.shape[1] != len(self.feature_names):
                 print(f"特徵數量不匹配: {X_raw.shape[1]} vs {len(self.feature_names)}")
                 print(f"  存在的特徵: {feature_cols}")
-                print(f"  標浜之特徵: {self.feature_names}")
+                print(f"  標浪之特徵: {self.feature_names}")
                 
-                # 建策整個整物特徵向量，沒有的就填 0
+                # 建策整個整物特徵橢量，沒有的就填 0
                 X_padded = np.zeros((1, len(self.feature_names)))
                 for i, feat in enumerate(self.feature_names):
                     if feat in feature_cols:
@@ -452,13 +504,15 @@ class RealTimePredictorService:
             if confidence < 0.6:
                 signal = 'HOLD'
             else:
-                signal = str(pred_label)  # 轉換為字串，以避不对的數字類型
+                signal = str(pred_label)  # 轉換為字串，以便不對的數字類形
             
-            # 将 label_encoder.classes_ 轉換為 Python 類型（缺沒 JSON 序列化）
+            # 將 label_encoder.classes_ 轉換為 Python 類形（缺沒 JSON 序列化）
             class_labels = [str(label) for label in self.label_encoder.classes_]
             
             self.latest_prediction = {
                 'timestamp': datetime.now().isoformat(),
+                'pair': pair,
+                'interval': interval,
                 'signal': signal,
                 'predicted_type': str(pred_label),
                 'confidence': confidence,
@@ -507,7 +561,7 @@ class RealTimePredictorService:
     
     def _auto_update_loop(self, pair, interval, update_interval):
         """
-        自動更新循環
+        自動更新趨環
         """
         while self.is_running:
             try:
@@ -538,16 +592,67 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/api/pairs', methods=['GET'])
+def get_pairs():
+    """獲取全部可用幣種"""
+    return jsonify({
+        'status': 'success',
+        'pairs': AVAILABLE_PAIRS,
+        'intervals': AVAILABLE_INTERVALS
+    })
+
+
+@app.route('/api/available-models', methods=['GET'])
+def get_available_models():
+    """獲取可用模型清單"""
+    available_models = predictor_service.get_available_models()
+    return jsonify({
+        'status': 'success',
+        'models': available_models
+    })
+
+
+@app.route('/api/load-model', methods=['POST'])
+def load_model():
+    """加載指定模型"""
+    pair = request.json.get('pair', 'BTCUSDT')
+    interval = request.json.get('interval', '15m')
+    
+    success = predictor_service.load_model(pair, interval)
+    
+    if success:
+        # 停止之前的自動更新
+        predictor_service.stop_auto_update()
+        # 開始新的自動更新
+        predictor_service.start_auto_update(pair, interval, update_interval=60)
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'模型已加載: {pair} {interval}',
+            'config': {
+                'pair': pair,
+                'interval': interval,
+                'depth': predictor_service.params.get('depth'),
+                'deviation': predictor_service.params.get('deviation')
+            }
+        })
+    else:
+        return jsonify({
+            'status': 'error',
+            'message': f'模型加載失敗: {pair} {interval}'
+        })
+
+
 @app.route('/api/latest', methods=['GET'])
 def get_latest():
     """獲取最新預測"""
     if predictor_service.latest_prediction is None:
         return jsonify({
             'status': 'error',
-            'message': '暫無預測數據，請稍候'
+            'message': '暫無預測數據，請稍後'
         })
     
-    # 轉換為 Python 類型
+    # 轉換為 Python 類形
     response_data = convert_to_python_types(predictor_service.latest_prediction)
     return jsonify({
         'status': 'success',
@@ -559,7 +664,7 @@ def get_latest():
 def get_history():
     """獲取歷史預測"""
     limit = int(request.args.get('limit', 100))
-    # 轉換為 Python 類型
+    # 轉換為 Python 類形
     history_data = convert_to_python_types(predictor_service.history[-limit:])
     return jsonify({
         'status': 'success',
@@ -573,8 +678,13 @@ def predict():
     pair = request.json.get('pair', 'BTCUSDT')
     interval = request.json.get('interval', '15m')
     
+    # 檢查模型是否匹配
+    if predictor_service.current_pair != pair or predictor_service.current_interval != interval:
+        # 需要加載新模型
+        predictor_service.load_model(pair, interval)
+    
     result = predictor_service.predict(pair, interval)
-    # 轉換為 Python 類型
+    # 轉換為 Python 類形
     result = convert_to_python_types(result)
     return jsonify(result)
 
@@ -586,8 +696,8 @@ def get_config():
         return jsonify({
             'status': 'success',
             'data': {
-                'pair': predictor_service.params.get('pair', 'BTCUSDT'),
-                'interval': predictor_service.params.get('interval', '15m'),
+                'pair': predictor_service.current_pair,
+                'interval': predictor_service.current_interval,
                 'depth': predictor_service.params.get('depth', 12),
                 'deviation': predictor_service.params.get('deviation', 0.8),
                 'num_features': len(predictor_service.feature_names) if predictor_service.feature_names else 0
@@ -602,18 +712,20 @@ def get_config():
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """健康檢查"""
+    """健康検查"""
     return jsonify({
         'status': 'ok',
         'model_loaded': predictor_service.model is not None,
         'latest_prediction': predictor_service.latest_prediction is not None,
         'binance_available': BINANCE_AVAILABLE and predictor_service.binance_client is not None,
-        'yfinance_available': YFINANCE_AVAILABLE
+        'yfinance_available': YFINANCE_AVAILABLE,
+        'current_pair': predictor_service.current_pair,
+        'current_interval': predictor_service.current_interval
     })
 
 
 if __name__ == '__main__':
-    # 啟動自動更新
+    # 開始自動更新
     predictor_service.start_auto_update(
         pair='BTCUSDT',
         interval='15m',
@@ -626,7 +738,7 @@ if __name__ == '__main__':
     print("="*60)
     print("訪問: http://localhost:5000")
     print("API: http://localhost:5000/api/latest")
-    print("模式Binance API 優先, yfinance 備用")
+    print("模式Binance API 儯先, yfinance 備用")
     print("="*60 + "\n")
     
     try:
