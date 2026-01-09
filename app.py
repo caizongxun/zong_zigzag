@@ -33,7 +33,6 @@ import threading
 import time
 import warnings
 warnings.filterwarnings('ignore')
-import asyncio
 
 import xgboost as xgb
 from sklearn.preprocessing import StandardScaler
@@ -55,7 +54,7 @@ except ImportError:
 
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # 信號定義 - 明確標示每個代碼的含義
 SIGNAL_DEFINITIONS = {
@@ -311,7 +310,7 @@ class RealTimePredictorService:
     def get_realtime_data(self, pair='BTCUSDT', interval='15m'):
         """
         獲取實時數據
-        選項: Binance (API) - yfinance (備用)
+        選項: Binance (API) -> yfinance (備用)
         """
         # 儯先使用 Binance API
         if BINANCE_AVAILABLE:
@@ -625,11 +624,15 @@ class RealTimePredictorService:
             try:
                 self.predict(pair, interval, use_previous_candle=True)
                 
-                # 通過 WebSocket 推送最新信號
-                socketio.emit('prediction_update', {
-                    'status': 'success',
-                    'data': convert_to_python_types(self.latest_prediction)
-                }, broadcast=True)
+                # 通過 WebSocket 推送最新信號到所有連接的客戶端
+                if self.latest_prediction:
+                    try:
+                        socketio.emit('prediction_update', {
+                            'status': 'success',
+                            'data': convert_to_python_types(self.latest_prediction)
+                        }, to=None)
+                    except Exception as emit_err:
+                        print(f"WebSocket 推送出錯: {str(emit_err)}")
                 
                 time.sleep(update_interval)
             except Exception as e:
@@ -790,7 +793,7 @@ def get_signal_definitions():
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """健康検查"""
+    """健康检查"""
     return jsonify({
         'status': 'ok',
         'model_loaded': predictor_service.model is not None,
@@ -806,13 +809,13 @@ def health_check():
 # WebSocket 事件
 @socketio.on('connect')
 def handle_connect():
-    print(f'客戶端已連接')
+    print('客戶端已連接')
     emit('connection_response', {'data': 'Connected to prediction server'})
 
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print(f'客戶端已斷開')
+    print('客戶端已斷開')
 
 
 @socketio.on('subscribe')
@@ -840,7 +843,7 @@ if __name__ == '__main__':
     print("WebSocket: ws://localhost:5000/socket.io")
     print("特徵: 每秒自動更新，使用前一根K棒進行預測")
     print("信號: 0=HH, 1=HL, 2=LH, 3=LL")
-    print("模式: Binance API 儯先, yfinance 備用")
+    print("模式: Binance API 優先, yfinance 備用")
     print("="*60 + "\n")
     
     try:
