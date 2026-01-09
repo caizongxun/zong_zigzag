@@ -73,7 +73,7 @@ class RealTimePredictorService:
                 self.binance_client = Client()
                 print("✓ Binance 客戶端已初始化")
             except:
-                print("⚠ Binance 客戶端初始化失敖")
+                print("⚠ Binance 客戶端初始化失敗")
         
         self.load_model()
     
@@ -90,11 +90,11 @@ class RealTimePredictorService:
             model_dir = max(model_dirs, key=lambda x: Path(x).stat().st_mtime)
             print(f"加載模型: {model_dir}")
             
-            # 优先尝试 joblib 格式
+            # 優先嘗試 joblib 格式
             if Path(f'{model_dir}/xgboost_model.joblib').exists():
                 print("  使用 joblib 格式...")
                 self.model = joblib.load(f'{model_dir}/xgboost_model.joblib')
-            # 此二尝试 JSON 格式
+            # 其次嘗試 JSON 格式
             elif Path(f'{model_dir}/xgboost_model.json').exists():
                 print("  使用 JSON 格式...")
                 self.model = xgb.XGBClassifier()
@@ -123,7 +123,7 @@ class RealTimePredictorService:
             
             return True
         except Exception as e:
-            print(f"模型加載失敖: {str(e)}")
+            print(f"模型加載失敗: {str(e)}")
             import traceback
             traceback.print_exc()
             return False
@@ -154,7 +154,7 @@ class RealTimePredictorService:
             )
             
             if not klines:
-                print(f"煙 Binance 未獲取資料: {pair} {interval}")
+                print(f"煙 Binance 未獲取數據: {pair} {interval}")
                 return None
             
             # 轉換為 DataFrame
@@ -164,7 +164,7 @@ class RealTimePredictorService:
                 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
             ])
             
-            # 粗低篇正式轉換
+            # 粗略篇正式轉換
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df['open'] = df['open'].astype(float)
             df['high'] = df['high'].astype(float)
@@ -172,13 +172,13 @@ class RealTimePredictorService:
             df['close'] = df['close'].astype(float)
             df['volume'] = df['volume'].astype(float)
             
-            # 仅保留需要的欄
+            # 僅保留需要的欄
             df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
             
             return df
         
         except Exception as e:
-            print(f"獲取 Binance 數據失敖: {str(e)}")
+            print(f"獲取 Binance 數據失敗: {str(e)}")
             return None
     
     def get_realtime_data_yfinance(self, pair='BTCUSDT', interval='15m'):
@@ -201,11 +201,11 @@ class RealTimePredictorService:
             }
             yf_interval = interval_map.get(interval, '15m')
             
-            # 獲取数據
+            # 獲取數據
             df = yf.download(symbol, period='60d', interval=yf_interval, progress=False)
             
             if df.empty:
-                print(f"未能从yfinance獲取 {pair} 的數據")
+                print(f"未能從yfinance獲取 {pair} 的數據")
                 return None
             
             # 重命名列
@@ -216,7 +216,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"獲取 yfinance 數據失敕: {str(e)}")
+            print(f"獲取 yfinance 數據失敗: {str(e)}")
             return None
     
     def get_realtime_data(self, pair='BTCUSDT', interval='15m'):
@@ -230,35 +230,84 @@ class RealTimePredictorService:
             if df is not None:
                 return df
         
-        # 詰依 yfinance
+        # 撤依 yfinance
         if YFINANCE_AVAILABLE:
             return self.get_realtime_data_yfinance(pair, interval)
         
         return None
+    
+    def _zigzag_points(self, prices, depth=12, deviation=0.8):
+        """
+        簡單 ZigZag 轉折點計算
+        返回轉折點位置的布林陣列
+        """
+        if len(prices) < depth * 2:
+            return np.zeros(len(prices))
+        
+        # 計算 ZigZag
+        zz = np.zeros(len(prices))
+        trend = 0  # 1: 上升, -1: 下降
+        pivot_idx = 0
+        pivot_price = prices.iloc[0]
+        
+        for i in range(depth, len(prices) - depth):
+            current = prices.iloc[i]
+            high_window = prices.iloc[i:i+depth].max()
+            low_window = prices.iloc[i:i+depth].min()
+            
+            # 計算偏差百分比
+            if pivot_price > 0:
+                deviation_pct = abs(current - pivot_price) / pivot_price * 100
+            else:
+                deviation_pct = 0
+            
+            # 判斷趨勢變化
+            if trend == 0:  # 初始化
+                if current > pivot_price:
+                    trend = 1
+                else:
+                    trend = -1
+            elif trend == 1 and current < pivot_price * (1 - deviation / 100):
+                # 上升轉下降
+                trend = -1
+                zz[pivot_idx] = 1  # 標記高點
+                pivot_idx = i
+                pivot_price = current
+            elif trend == -1 and current > pivot_price * (1 + deviation / 100):
+                # 下降轉上升
+                trend = 1
+                zz[pivot_idx] = -1  # 標記低點
+                pivot_idx = i
+                pivot_price = current
+        
+        return zz
     
     def extract_zigzag_features(self, df):
         """
         提取 ZigZag 特徵
         基於最新的 K 棒數據
         
-        爲保證輸汐数齄整：
+        為保證輸出特徵數量為 11：
+        - open
+        - high
+        - low
+        - close
+        - volume
+        - zigzag (轉折點指標)
         - returns
         - volatility
         - momentum
         - rsi
         - macd
-        - sma_5
-        - sma_10
-        - sma_20
-        - sma_50
-        - high_low_range
-        - close_to_high
-        - close_to_low
-        
-        後会捲取模式下的所有數叶所有的特徵數量。
         """
         try:
             df = df.copy()
+            
+            # 提取 ZigZag 轉折點特徵
+            # 使用訓練時的參數
+            depth = self.params.get('depth', 12)
+            deviation = self.params.get('deviation', 0.8)
+            df['zigzag'] = self._zigzag_points(df['close'], depth=depth, deviation=deviation)
             
             # 基礎技術指標
             df['returns'] = df['close'].pct_change()
@@ -267,24 +316,13 @@ class RealTimePredictorService:
             df['rsi'] = self._calculate_rsi(df['close'], 14)
             df['macd'] = df['close'].ewm(span=12).mean() - df['close'].ewm(span=26).mean()
             
-            # 添加移動平均
-            df['sma_5'] = df['close'].rolling(5).mean()
-            df['sma_10'] = df['close'].rolling(10).mean()
-            df['sma_20'] = df['close'].rolling(20).mean()
-            df['sma_50'] = df['close'].rolling(50).mean()
-            
-            # 添加高低點距離
-            df['high_low_range'] = df['high'] - df['low']
-            df['close_to_high'] = (df['high'] - df['close']) / (df['high'] - df['low'] + 1e-10)
-            df['close_to_low'] = (df['close'] - df['low']) / (df['high'] - df['low'] + 1e-10)
-            
             # 填充缺失值
             df = df.fillna(method='bfill').fillna(method='ffill').fillna(0)
             
             return df
         
         except Exception as e:
-            print(f"特徵提取失敕: {str(e)}")
+            print(f"特徵提取失敗: {str(e)}")
             return None
     
     def _calculate_rsi(self, prices, period=14):
@@ -332,7 +370,7 @@ class RealTimePredictorService:
             if df is None:
                 return {
                     'status': 'error',
-                    'message': '無法獲取市場數據 - 請検查網路連接'
+                    'message': '無法獲取市場數據 - 請檢查網路連接'
                 }
             
             # 提取特徵
@@ -340,7 +378,7 @@ class RealTimePredictorService:
             if df_features is None:
                 return {
                     'status': 'error',
-                    'message': '特徵提取失敕'
+                    'message': '特徵提取失敗'
                 }
             
             # 獲取最新的 K 棒
@@ -354,16 +392,15 @@ class RealTimePredictorService:
                 'volume': float(latest_row['volume']) if pd.notna(latest_row['volume']) else 0
             }
             
-            # 準備特徵向量 - 需要按照模型訓練時的順序
-            # 確保特徵順序與模型一致
+            # 準備特徵向量 - 按照模型訓練時的順序
             feature_cols = [col for col in self.feature_names if col in df_features.columns]
             
-            # 外突紀風阧: 有五個特徵沒有對應的欄
+            # 外突紀風鍠: 有五個特徵沒有對應的欄
             missing_features = [f for f in self.feature_names if f not in df_features.columns]
             if missing_features:
                 print(f"警告: 特徵 {missing_features} 不存在整個數據桂典中")
             
-            # 按照預預標整序序提取
+            # 按照預測標整序提取
             X_raw = df_features.iloc[-1:][feature_cols].values
             
             # 如果特徵數量不符，沒有合適的特徵就填 0
@@ -420,7 +457,7 @@ class RealTimePredictorService:
             }
         
         except Exception as e:
-            print(f"預測失敕: {str(e)}")
+            print(f"預測失敗: {str(e)}")
             import traceback
             traceback.print_exc()
             return {
