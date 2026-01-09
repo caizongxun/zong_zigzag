@@ -198,12 +198,16 @@ class ZigZagFeatureEngineering:
         pivot_df = df[pivot_mask].copy()
         if len(pivot_df) > 0:
             for n in [2, 3, 5]:
+                # 創建臨時的swing_type_encoded列用於rolling計算
+                swing_encoded = pivot_df['swing_type_encoded'].astype(float)
+                
                 for swing in ['HH', 'HL', 'LH', 'LL']:
+                    swing_code = swing_type_map.get(swing, 0)
                     # 計算最近N個轉折點中該類型的比例
-                    rolling_count = pivot_df['swing_type'].rolling(window=n, min_periods=1).apply(
-                        lambda x: (x == swing).sum() / len(x)
+                    rolling_count = swing_encoded.rolling(window=n, min_periods=1).apply(
+                        lambda x: (x == swing_code).sum() / len(x)
                     )
-                    df.loc[pivot_df.index, f'recent_{n}_{swing.lower()}_ratio'] = rolling_count
+                    df.loc[pivot_df.index, f'recent_{n}_{swing.lower()}_ratio'] = rolling_count.values
         
         # 填充非轉折點的統計值為0
         for n in [2, 3, 5]:
