@@ -75,7 +75,10 @@ class ModelValidator:
         print(f"  時間框架: {self.params['interval']}")
         print(f"  特徵數: {len(self.feature_names)}")
         print(f"  類別數: {len(self.label_encoder.classes_)}")
-        print(f"  類別: {', '.join(self.label_encoder.classes_)}")
+        
+        # 轉換類別為字符串進行輸出
+        classes_str = ', '.join([str(c) for c in self.label_encoder.classes_])
+        print(f"  類別: {classes_str}")
     
     def validate_on_data(self, df_features):
         """
@@ -139,7 +142,7 @@ class ModelValidator:
         print(f"\n詳細分類報告:")
         print(classification_report(
             y_true, y_pred,
-            target_names=self.label_encoder.classes_,
+            target_names=[str(c) for c in self.label_encoder.classes_],
             zero_division=0
         ))
         
@@ -151,7 +154,7 @@ class ModelValidator:
         # 添加預測詳情
         df['y_true'] = y_true
         df['y_pred'] = y_pred
-        df['y_pred_label'] = self.label_encoder.inverse_transform(y_pred)
+        df['y_pred_label'] = [str(self.label_encoder.classes_[i]) for i in y_pred]
         df['prediction_correct'] = (y_true == y_pred)
         df['max_prob'] = np.max(y_pred_proba, axis=1)
         
@@ -187,10 +190,11 @@ class ModelValidator:
         # 1. 混淆矩陣
         ax1 = plt.subplot(2, 3, 1)
         cm = metrics['confusion_matrix']
+        class_labels = [str(c) for c in self.label_encoder.classes_]
         sns.heatmap(
             cm, annot=True, fmt='d', cmap='Blues',
-            xticklabels=self.label_encoder.classes_,
-            yticklabels=self.label_encoder.classes_,
+            xticklabels=class_labels,
+            yticklabels=class_labels,
             ax=ax1, cbar=True
         )
         ax1.set_title('混淆矩陣', fontsize=12, fontweight='bold')
@@ -215,7 +219,7 @@ class ModelValidator:
             ax2.text(bar.get_x() + bar.get_width()/2., height,
                     f'{height:.3f}', ha='center', va='bottom')
         
-        # 3. 類別分佈
+        # 3. 類別分布
         ax3 = plt.subplot(2, 3, 3)
         predictions_df = metrics['predictions']
         true_counts = predictions_df['swing_type'].value_counts()
@@ -224,22 +228,22 @@ class ModelValidator:
         x = np.arange(len(self.label_encoder.classes_))
         width = 0.35
         
-        true_vals = [true_counts.get(label, 0) for label in self.label_encoder.classes_]
-        pred_vals = [pred_counts.get(label, 0) for label in self.label_encoder.classes_]
+        true_vals = [true_counts.get(label, 0) for label in class_labels]
+        pred_vals = [pred_counts.get(label, 0) for label in class_labels]
         
         ax3.bar(x - width/2, true_vals, width, label='實際', alpha=0.8)
         ax3.bar(x + width/2, pred_vals, width, label='預測', alpha=0.8)
         ax3.set_xlabel('標籤類別')
         ax3.set_ylabel('數量')
-        ax3.set_title('標籤類別分佈對比', fontsize=12, fontweight='bold')
+        ax3.set_title('標籤類別分布對比', fontsize=12, fontweight='bold')
         ax3.set_xticks(x)
-        ax3.set_xticklabels(self.label_encoder.classes_)
+        ax3.set_xticklabels(class_labels)
         ax3.legend()
         
-        # 4. 正確率按類別
+        # 4. 各類別正確率
         ax4 = plt.subplot(2, 3, 4)
         class_accuracy = []
-        for label in self.label_encoder.classes_:
+        for label in class_labels:
             mask = predictions_df['swing_type'] == label
             if mask.sum() > 0:
                 acc = predictions_df[mask]['prediction_correct'].mean()
@@ -247,7 +251,7 @@ class ModelValidator:
             else:
                 class_accuracy.append(0)
         
-        bars = ax4.bar(self.label_encoder.classes_, class_accuracy, color='skyblue')
+        bars = ax4.bar(class_labels, class_accuracy, color='skyblue')
         ax4.set_ylim([0, 1])
         ax4.set_title('各類別正確率', fontsize=12, fontweight='bold')
         ax4.set_ylabel('正確率')
@@ -256,14 +260,14 @@ class ModelValidator:
             ax4.text(bar.get_x() + bar.get_width()/2., height,
                     f'{height:.3f}', ha='center', va='bottom')
         
-        # 5. 預測置信度分佈
+        # 5. 預測置信度分布
         ax5 = plt.subplot(2, 3, 5)
         ax5.hist(predictions_df['max_prob'], bins=50, edgecolor='black', alpha=0.7)
         ax5.axvline(predictions_df['max_prob'].mean(), color='red', linestyle='--', 
                    label=f'平均: {predictions_df["max_prob"].mean():.3f}')
         ax5.set_xlabel('最大預測概率')
         ax5.set_ylabel('頻率')
-        ax5.set_title('預測置信度分佈', fontsize=12, fontweight='bold')
+        ax5.set_title('預測置信度分布', fontsize=12, fontweight='bold')
         ax5.legend()
         
         # 6. 錯誤分析
@@ -296,13 +300,13 @@ class ModelValidator:
             
             fig_plotly = make_subplots(
                 rows=2, cols=3,
-                subplot_titles=('混淆矩陣', '性能指標', '標籤分佈', 
+                subplot_titles=('混淆矩陣', '性能指標', '標籤分布', 
                                '各類別正確率', '預測置信度', '錯誤分析')
             )
             
             # 混淆矩陣熱力圖
             fig_plotly.add_trace(
-                go.Heatmap(z=cm, x=self.label_encoder.classes_, y=self.label_encoder.classes_),
+                go.Heatmap(z=cm, x=class_labels, y=class_labels),
                 row=1, col=1
             )
             
@@ -312,19 +316,19 @@ class ModelValidator:
                 row=1, col=2
             )
             
-            # 標籤分佈
+            # 標籤分布
             fig_plotly.add_trace(
-                go.Bar(x=self.label_encoder.classes_, y=true_vals, name='實際'),
+                go.Bar(x=class_labels, y=true_vals, name='實際'),
                 row=1, col=3
             )
             fig_plotly.add_trace(
-                go.Bar(x=self.label_encoder.classes_, y=pred_vals, name='預測'),
+                go.Bar(x=class_labels, y=pred_vals, name='預測'),
                 row=1, col=3
             )
             
             # 各類別正確率
             fig_plotly.add_trace(
-                go.Bar(x=self.label_encoder.classes_, y=class_accuracy, name='正確率'),
+                go.Bar(x=class_labels, y=class_accuracy, name='正確率'),
                 row=2, col=1
             )
             
@@ -367,7 +371,7 @@ class ModelValidator:
         y_pred_proba = self.xgb_model.predict_proba(X)
         max_prob = np.max(y_pred_proba, axis=1)
         
-        df['predicted_class'] = self.label_encoder.inverse_transform(y_pred)
+        df['predicted_class'] = [str(self.label_encoder.classes_[i]) for i in y_pred]
         df['confidence'] = max_prob
         df['high_confidence'] = max_prob >= threshold
         
@@ -378,7 +382,7 @@ class ModelValidator:
         df.loc[~df['high_confidence'], 'signal'] = 'HOLD'  # 低信心保持
         
         # 統計
-        print(f"\n信號分佈:")
+        print(f"\n信號分布:")
         signal_counts = df['signal'].value_counts()
         for signal, count in signal_counts.items():
             pct = count / len(df) * 100
@@ -399,6 +403,8 @@ class ModelValidator:
         """
         import os
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        
+        class_labels = [str(c) for c in self.label_encoder.classes_]
         
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write("="*60 + "\n")
