@@ -119,6 +119,7 @@ class RealTimePredictorService:
             print(f"  交易對: {self.params.get('pair', 'N/A')}")
             print(f"  時間框架: {self.params.get('interval', 'N/A')}")
             print(f"  特徵數: {len(self.feature_names)}")
+            print(f"  特徵名稱: {self.feature_names}")
             
             return True
         except Exception as e:
@@ -177,7 +178,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"獲取 Binance 數據失敕: {str(e)}")
+            print(f"獲取 Binance 數據失敖: {str(e)}")
             return None
     
     def get_realtime_data_yfinance(self, pair='BTCUSDT', interval='15m'):
@@ -239,6 +240,22 @@ class RealTimePredictorService:
         """
         提取 ZigZag 特徵
         基於最新的 K 棒數據
+        
+        爲保證輸汐数齄整：
+        - returns
+        - volatility
+        - momentum
+        - rsi
+        - macd
+        - sma_5
+        - sma_10
+        - sma_20
+        - sma_50
+        - high_low_range
+        - close_to_high
+        - close_to_low
+        
+        後会捲取模式下的所有數叶所有的特徵數量。
         """
         try:
             df = df.copy()
@@ -337,19 +354,33 @@ class RealTimePredictorService:
                 'volume': float(latest_row['volume']) if pd.notna(latest_row['volume']) else 0
             }
             
-            # 準備特徵向量
+            # 準備特徵向量 - 需要按照模型訓練時的順序
+            # 確保特徵順序與模型一致
             feature_cols = [col for col in self.feature_names if col in df_features.columns]
-            X = df_features.iloc[-1:][feature_cols].values
             
-            if X.shape[1] != len(self.feature_names):
-                print(f"特徵數量不匹配: {X.shape[1]} vs {len(self.feature_names)}")
-                # 填充缺失的特徵
+            # 外突紀風阧: 有五個特徵沒有對應的欄
+            missing_features = [f for f in self.feature_names if f not in df_features.columns]
+            if missing_features:
+                print(f"警告: 特徵 {missing_features} 不存在整個數據桂典中")
+            
+            # 按照預預標整序序提取
+            X_raw = df_features.iloc[-1:][feature_cols].values
+            
+            # 如果特徵數量不符，沒有合適的特徵就填 0
+            if X_raw.shape[1] != len(self.feature_names):
+                print(f"特徵數量不匹配: {X_raw.shape[1]} vs {len(self.feature_names)}")
+                print(f"  存在的特徵: {feature_cols}")
+                print(f"  標浜之特徵: {self.feature_names}")
+                
+                # 建策整個整物特徵向量，沒有的就填 0
                 X_padded = np.zeros((1, len(self.feature_names)))
                 for i, feat in enumerate(self.feature_names):
                     if feat in feature_cols:
                         idx = feature_cols.index(feat)
-                        X_padded[0, i] = X[0, idx]
+                        X_padded[0, i] = X_raw[0, idx]
                 X = X_padded
+            else:
+                X = X_raw
             
             # 預測
             y_pred = self.model.predict(X)[0]
