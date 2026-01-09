@@ -19,19 +19,27 @@ class ZigZagHybridModel:
     """
     混合模型: XGBoost + LSTM
     基於2025年研究最佳實踐:
-    1. XGBoost處理表格化特徵 (技術指標, 統計特徵)
+    1. XGBoost葵理表格化特徵 (技術指標, 統計特徵)
     2. LSTM捕捉時間序列模式 (價格動量)
     3. 集成兩個模型的預測
     """
     
-    def __init__(self, n_classes: int = 4, sequence_length: int = 30):
+    def __init__(self, n_classes: int = 4, sequence_length: int = None, train_samples: int = None):
         """
         Args:
             n_classes: 類別數量 (HH, HL, LH, LL)
-            sequence_length: LSTM輸入序列長度
+            sequence_length: LSTM輸入序列長度 (如果為 None,會根據訓練樣本自動設定)
+            train_samples: 訓練樣本數
         """
         self.n_classes = n_classes
-        self.sequence_length = sequence_length
+        self.train_samples = train_samples
+        # 動態設定序列長度
+        if sequence_length is None and train_samples is not None:
+            # 根據訓練樣本自動設定（最多使用 1/3 的訓練樣本）
+            self.sequence_length = max(5, int(train_samples / 3))
+        else:
+            self.sequence_length = sequence_length or 30
+        
         self.xgb_model = None
         self.lstm_model = None
         self.scaler = StandardScaler()
@@ -98,12 +106,12 @@ class ZigZagHybridModel:
         基於2025研究,LSTM適合捕捉時間序列的長期依賴
         """
         model = keras.Sequential([
-            # 第一層LSTM
+            # 第一层LSTM
             layers.LSTM(128, return_sequences=True, input_shape=input_shape),
             layers.Dropout(0.3),
             layers.BatchNormalization(),
             
-            # 第二層LSTM
+            # 第二层LSTM
             layers.LSTM(64, return_sequences=False),
             layers.Dropout(0.3),
             layers.BatchNormalization(),
@@ -130,8 +138,19 @@ class ZigZagHybridModel:
     def prepare_lstm_sequences(self, X, y):
         """
         準備LSTM序列資料
+        
+        重要: 序列長度不能比樣本數更長
         """
+        if len(X) < self.sequence_length:
+            print(f"\n警告: 樣本數 ({len(X)}) < 序列長度 ({self.sequence_length})")
+            print(f"自動調整序列長度為 {max(1, len(X) - 1)}")
+            self.sequence_length = max(1, len(X) - 1)
+        
         n_samples = len(X) - self.sequence_length + 1
+        if n_samples <= 0:
+            print(f"錯誤: 無法產生LSTM序列 (n_samples={n_samples})")
+            return None, None
+        
         X_seq = np.zeros((n_samples, self.sequence_length, X.shape[1]))
         y_seq = np.zeros(n_samples, dtype=int)
         
@@ -144,10 +163,17 @@ class ZigZagHybridModel:
     def train_lstm_model(self, X_train, y_train, X_test, y_test):
         """
         訓練LSTM模型
+        重要: 樣本太少時會自動設定序列長度
         """
         print("\n" + "="*60)
         print("訓練LSTM模型")
         print("="*60)
+        
+        # 樣本太少的正常情形 (最多使用訓練樣本的 1/3)
+        print(f"\n訓練樣本數: {len(X_train)}")
+        if len(X_train) < 10:
+            print("⚠ 警告: 訓練樣本很少 (< 10),LSTM可能無法有效訓練")
+            print("建議當使用更多資料或改為XGBoost単独模型")
         
         # 標準化
         X_train_scaled = self.scaler.fit_transform(X_train)
@@ -156,7 +182,16 @@ class ZigZagHybridModel:
         # 準備序列
         print(f"\n準備序列資料 (序列長度={self.sequence_length})...")
         X_train_seq, y_train_seq = self.prepare_lstm_sequences(X_train_scaled, y_train)
+        
+        if X_train_seq is None:
+            print("\n錯誤: 無法訓練LSTM")
+            return None, None
+        
         X_test_seq, y_test_seq = self.prepare_lstm_sequences(X_test_scaled, y_test)
+        
+        if X_test_seq is None:
+            print("警告: 測試集樣本太少,無法訓練LSTM")
+            return None, None
         
         # One-hot encoding
         y_train_cat = to_categorical(y_train_seq, num_classes=self.n_classes)
@@ -193,7 +228,7 @@ class ZigZagHybridModel:
             X_train_seq, y_train_cat,
             validation_data=(X_test_seq, y_test_cat),
             epochs=100,
-            batch_size=32,
+            batch_size=max(1, len(X_train_seq) // 2),  # 樣本太少時使用較小 batch
             callbacks=[early_stop, reduce_lr],
             verbose=1
         )
@@ -214,13 +249,23 @@ class ZigZagHybridModel:
     def ensemble_predict(self, X, y=None):
         """
         集成預測: 結合XGBoost和LSTM的預測
+        重要: 如果沒有LSTM模型,只輸出XGBoost預測
         """
         # XGBoost預測機率
         xgb_proba = self.xgb_model.predict_proba(X)
         
+        # 如果沒有LSTM模型,直接輸出XGBoost
+        if self.lstm_model is None:
+            return np.argmax(xgb_proba, axis=1), xgb_proba
+        
         # LSTM預測機率
         X_scaled = self.scaler.transform(X)
         X_seq, _ = self.prepare_lstm_sequences(X_scaled, np.zeros(len(X)))
+        
+        if X_seq is None:
+            # LSTM輸入太少,只使用XGBoost
+            return np.argmax(xgb_proba, axis=1), xgb_proba
+        
         lstm_proba = self.lstm_model.predict(X_seq, verbose=0)
         
         # 加權平均 (XGBoost比重0.6, LSTM比重0.4)
@@ -316,14 +361,26 @@ def main():
     
     # 5. 訓練模型
     print("\n[5/7] 訓練模型...")
-    model = ZigZagHybridModel(n_classes=len(label_encoder.classes_), sequence_length=30)
+    # 第一次設定時自動計算序列長度
+    model = ZigZagHybridModel(
+        n_classes=len(label_encoder.classes_), 
+        sequence_length=None,
+        train_samples=len(X_train)
+    )
+    print(f"\n設定LSTM序列長度: {model.sequence_length}")
     model.feature_names = feature_names
     
     # 5a. XGBoost
     xgb_pred = model.build_xgboost_model(X_train, y_train, X_test, y_test)
     
-    # 5b. LSTM
-    lstm_pred, history = model.train_lstm_model(X_train, y_train, X_test, y_test)
+    # 5b. LSTM (樣本太少時可能會取消)
+    lstm_pred = None
+    history = None
+    if len(X_train) > 5:  # 樣本大5筆以上才訓練LSTM
+        lstm_pred, history = model.train_lstm_model(X_train, y_train, X_test, y_test)
+    else:
+        print("\n警告: 訓練樣本太少 (< 5),取消LSTM訓練")
+        print("將仅使用XGBoost模型")
     
     # 5c. 集成模型
     print("\n" + "="*60)
@@ -331,8 +388,11 @@ def main():
     print("="*60)
     ensemble_pred, ensemble_proba = model.ensemble_predict(X_test, y_test)
     
-    # 調整測試集長度 (因為LSTM需要序列)
-    y_test_adj = y_test[model.sequence_length-1:]
+    # 調整測試集長度 (如果LSTM存在)
+    if lstm_pred is not None:
+        y_test_adj = y_test[model.sequence_length-1:]
+    else:
+        y_test_adj = y_test
     
     # 6. 評估
     print("\n[6/7] 模型評估...")
@@ -348,12 +408,13 @@ def main():
     print(f"  準確率: {xgb_acc:.4f}")
     print(f"  F1 Score: {xgb_f1:.4f}")
     
-    # LSTM結果
-    lstm_acc = accuracy_score(y_test_adj, lstm_pred)
-    lstm_f1 = f1_score(y_test_adj, lstm_pred, average='weighted')
-    print(f"\nLSTM:")
-    print(f"  準確率: {lstm_acc:.4f}")
-    print(f"  F1 Score: {lstm_f1:.4f}")
+    # LSTM結果 (如果訓練了)
+    if lstm_pred is not None:
+        lstm_acc = accuracy_score(y_test_adj, lstm_pred)
+        lstm_f1 = f1_score(y_test_adj, lstm_pred, average='weighted')
+        print(f"\nLSTM:")
+        print(f"  準確率: {lstm_acc:.4f}")
+        print(f"  F1 Score: {lstm_f1:.4f}")
     
     # 集成結果
     ensemble_acc = accuracy_score(y_test_adj, ensemble_pred)
@@ -388,9 +449,10 @@ def main():
     model.xgb_model.save_model('models/xgboost_model.json')
     print("✓ XGBoost模型: models/xgboost_model.json")
     
-    # 儲存LSTM
-    model.lstm_model.save('models/lstm_model.h5')
-    print("✓ LSTM模型: models/lstm_model.h5")
+    # 儲存LSTM (如果訓練了)
+    if model.lstm_model is not None:
+        model.lstm_model.save('models/lstm_model.h5')
+        print("✓ LSTM模型: models/lstm_model.h5")
     
     # 儲存Scaler
     with open('models/scaler.pkl', 'wb') as f:
@@ -416,12 +478,15 @@ def main():
         'sequence_length': model.sequence_length,
         'train_samples': len(X_train),
         'test_samples': len(X_test),
+        'lstm_enabled': model.lstm_model is not None,
         'metrics': {
             'xgboost': {'accuracy': float(xgb_acc), 'f1_score': float(xgb_f1)},
-            'lstm': {'accuracy': float(lstm_acc), 'f1_score': float(lstm_f1)},
             'ensemble': {'accuracy': float(ensemble_acc), 'f1_score': float(ensemble_f1)}
         }
     }
+    
+    if lstm_pred is not None:
+        training_info['metrics']['lstm'] = {'accuracy': float(lstm_acc), 'f1_score': float(lstm_f1)}
     
     with open('models/training_info.json', 'w') as f:
         json.dump(training_info, f, indent=2)
@@ -434,6 +499,9 @@ def main():
     print(f"\n最佳模型: 集成模型")
     print(f"準確率: {ensemble_acc:.4f}")
     print(f"F1 Score: {ensemble_f1:.4f}")
+    
+    if lstm_pred is None:
+        print("\n注意: 樣本数太少,未訓練LSTM模型,仅使用XGBoost")
     
     return True
 
