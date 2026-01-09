@@ -12,7 +12,7 @@ API 端點：
   GET /api/config - 獲取配置信息
 """
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 import pandas as pd
 import numpy as np
@@ -28,6 +28,7 @@ warnings.filterwarnings('ignore')
 
 import xgboost as xgb
 from sklearn.preprocessing import StandardScaler
+import joblib
 
 try:
     import yfinance as yf
@@ -70,6 +71,12 @@ class RealTimePredictorService:
     def load_model(self):
         """
         加載最新的模型
+        訓練流程会生成下面標籤準文件：
+        1. xgboost_model.joblib (joblib 格式)
+        2. xgboost_model.json (JSON 格式)
+        3. label_encoder.pkl
+        4. feature_names.json
+        5. params.json
         """
         try:
             model_dirs = glob.glob('models/*')
@@ -80,9 +87,18 @@ class RealTimePredictorService:
             model_dir = max(model_dirs, key=lambda x: Path(x).stat().st_mtime)
             print(f"加載模型: {model_dir}")
             
-            # 加載模型
-            self.model = xgb.XGBClassifier()
-            self.model.load_model(f'{model_dir}/xgboost_model.json')
+            # 优先尝试 joblib 格式
+            if Path(f'{model_dir}/xgboost_model.joblib').exists():
+                print("  使用 joblib 格式...")
+                self.model = joblib.load(f'{model_dir}/xgboost_model.joblib')
+            # 此二尝试 JSON 格式
+            elif Path(f'{model_dir}/xgboost_model.json').exists():
+                print("  使用 JSON 格式...")
+                self.model = xgb.XGBClassifier()
+                self.model.load_model(f'{model_dir}/xgboost_model.json')
+            else:
+                print("未找到模型檔案")
+                return False
             
             # 加載標籤編碼器
             with open(f'{model_dir}/label_encoder.pkl', 'rb') as f:
@@ -104,6 +120,8 @@ class RealTimePredictorService:
             return True
         except Exception as e:
             print(f"模型加載失敗: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def get_realtime_data(self, pair='BTCUSDT', interval='15m'):
@@ -143,7 +161,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"獲取數據失敗: {str(e)}")
+            print(f"獲取數據失敕: {str(e)}")
             return None
     
     def extract_zigzag_features(self, df):
@@ -179,7 +197,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"特徵提取失敗: {str(e)}")
+            print(f"特徵提取失敕: {str(e)}")
             return None
     
     def _calculate_rsi(self, prices, period=14):
@@ -235,7 +253,7 @@ class RealTimePredictorService:
             if df_features is None:
                 return {
                     'status': 'error',
-                    'message': '特徵提取失敗'
+                    'message': '特徵提取失敕'
                 }
             
             # 獲取最新的 K 棒
@@ -302,7 +320,7 @@ class RealTimePredictorService:
             }
         
         except Exception as e:
-            print(f"預測失敗: {str(e)}")
+            print(f"預測失敕: {str(e)}")
             import traceback
             traceback.print_exc()
             return {
@@ -387,8 +405,6 @@ def get_history():
 @app.route('/api/predict', methods=['POST'])
 def predict():
     """觸發預測"""
-    from flask import request
-    
     pair = request.json.get('pair', 'BTCUSDT')
     interval = request.json.get('interval', '15m')
     
