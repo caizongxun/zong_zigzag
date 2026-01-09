@@ -45,12 +45,12 @@ class CompletePipeline:
     一個文件包含：數據下載 → ZigZag提取 → 特徵工程 → 模型訓練
     """
     
-    def __init__(self, pairs=None, interval='15m', depth=12, deviation=0.8, 
+    def __init__(self, pairs=None, intervals=None, depth=12, deviation=0.8, 
                  backstep=2, sample_size=1000):
         """
         參數說明：
             pairs (list or str): 交易對，如 ['BTCUSDT', 'ETHUSDT']、'all' 訓練全部、'ALL' 訓練全部
-            interval (str): 時間框架，如 '15m', '1h' 等
+            intervals (list or str): 時間框架，如 ['15m', '1h']、'15m' 掲 '1h'
             depth (int): ZigZag Depth 參數
             deviation (float): ZigZag Deviation 參數 (%)
             backstep (int): ZigZag Backstep 參數
@@ -67,7 +67,17 @@ class CompletePipeline:
         else:
             self.pairs = ['BTCUSDT']
         
-        self.interval = interval
+        # 决定訓練的時間框架
+        if isinstance(intervals, str):
+            if intervals.lower() in ['all', '*']:
+                self.intervals = ALL_INTERVALS.copy()
+            else:
+                self.intervals = [intervals]
+        elif isinstance(intervals, list):
+            self.intervals = intervals
+        else:
+            self.intervals = ['15m']
+        
         self.depth = depth
         self.deviation = deviation
         self.backstep = backstep
@@ -81,7 +91,7 @@ class CompletePipeline:
         # 訓練統計
         self.train_results = []
     
-    def download_data(self, pair):
+    def download_data(self, pair, interval):
         """
         第一步：下載數據
         從 HuggingFace 下載加密貨幣 OHLCV 數據
@@ -95,13 +105,13 @@ class CompletePipeline:
             import requests
             from io import BytesIO
         
-        print(f"\n下載 {pair} {self.interval}...")
+        print(f"  下載 {pair} {interval}...")
         
         # 提取幣種符號（去掉 USDT 後綴）
         symbol = pair.replace('USDT', '')
         
         # HuggingFace 正確 URL 結構
-        hf_url = f"https://huggingface.co/datasets/zongowo111/v2-crypto-ohlcv-data/resolve/main/klines/{pair}/{symbol}_{self.interval}.parquet"
+        hf_url = f"https://huggingface.co/datasets/zongowo111/v2-crypto-ohlcv-data/resolve/main/klines/{pair}/{symbol}_{interval}.parquet"
         
         try:
             response = requests.get(hf_url, timeout=30)
@@ -113,25 +123,25 @@ class CompletePipeline:
                 if len(df) > self.sample_size:
                     df = df.tail(self.sample_size).reset_index(drop=True)
                 
-                print(f"  ✓ 成功下載 {len(df):,} 條記錄")
+                print(f"    ✓ 成功下載 {len(df):,} 條記錄")
                 return df
             else:
-                print(f"  × HTTP 狀態碼: {response.status_code}")
+                print(f"    × HTTP 狀態碼: {response.status_code}")
                 return None
         
         except Exception as e:
-            print(f"  × 下載失敖: {str(e)[:50]}")
+            print(f"    × 下載失敖: {str(e)[:50]}")
             return None
     
-    def _generate_sample_data(self, pair):
+    def _generate_sample_data(self, pair, interval):
         """
         生成模擬數據用於演示
         """
-        np.random.seed(hash(pair) % 2**32)
+        np.random.seed(hash(pair + interval) % 2**32)
         n_records = self.sample_size
         
         # 生成時間序列
-        dates = pd.date_range(end=datetime.now(), periods=n_records, freq=self.interval)
+        dates = pd.date_range(end=datetime.now(), periods=n_records, freq=interval)
         
         # 生成價格數據（帶趨勢和隨機性）
         n = np.arange(n_records)
@@ -154,10 +164,10 @@ class CompletePipeline:
         df = df[df['high'] >= df['close']].reset_index(drop=True)
         df = df[df['low'] <= df['close']].reset_index(drop=True)
         
-        print(f"  ✓ 生成 {len(df):,} 條模擬數據")
+        print(f"    ✓ 生成 {len(df):,} 條模擬數據")
         return df
     
-    def extract_zigzag(self, df, pair):
+    def extract_zigzag(self, df, pair, interval):
         """
         第二步：提取 ZigZag 轉折點
         """
@@ -167,7 +177,7 @@ class CompletePipeline:
         except ImportError:
             ZigZagIndicator = self._get_zigzag_class()
         
-        print(f"  提取 ZigZag...")
+        print(f"    提取 ZigZag...")
         
         zz = ZigZagIndicator(
             depth=self.depth,
@@ -178,7 +188,7 @@ class CompletePipeline:
         result = zz.extract(df)
         
         pivot_count = result['swing_type'].notna().sum()
-        print(f"  ✓ 轉折點: {pivot_count} 個 ({pivot_count/len(result)*100:.2f}%)")
+        print(f"    ✓ 轉折點: {pivot_count} 個 ({pivot_count/len(result)*100:.2f}%)")
         
         return result
     
@@ -294,7 +304,7 @@ class CompletePipeline:
         
         return rsi
     
-    def train_models(self, df_features, pair):
+    def train_models(self, df_features, pair, interval):
         """
         第四步：訓練模型
         """
@@ -308,11 +318,11 @@ class CompletePipeline:
         
         # 驗證數據
         if len(X_train) < 10 or len(X_test) < 3:
-            print(f"  × 數據不足以訓練")
+            print(f"    × 數據不足以訓練")
             return None
         
         # 訓練 XGBoost
-        print(f"  訓練 XGBoost...")
+        print(f"    訓練 XGBoost...")
         xgb_model = self._train_xgboost(X_train, y_train, X_test, y_test, label_encoder)
         
         # 評估
@@ -320,14 +330,14 @@ class CompletePipeline:
         xgb_acc = accuracy_score(y_test, xgb_pred)
         xgb_f1 = f1_score(y_test, xgb_pred, average='weighted', zero_division=0)
         
-        print(f"  ✓ 準確率: {xgb_acc:.4f} | F1: {xgb_f1:.4f}")
+        print(f"    ✓ 準確率: {xgb_acc:.4f} | F1: {xgb_f1:.4f}")
         
         # 保存模型
-        model_dir = self._save_models(xgb_model, StandardScaler(), label_encoder, feature_names, pair)
+        model_dir = self._save_models(xgb_model, StandardScaler(), label_encoder, feature_names, pair, interval)
         
         return {
             'pair': pair,
-            'interval': self.interval,
+            'interval': interval,
             'accuracy': xgb_acc,
             'f1_score': xgb_f1,
             'train_samples': len(X_train),
@@ -410,7 +420,7 @@ class CompletePipeline:
         
         return model
     
-    def _save_models(self, xgb_model, scaler, label_encoder, feature_names, pair):
+    def _save_models(self, xgb_model, scaler, label_encoder, feature_names, pair, interval):
         """
         保存模型 - 結構化存放
         models/
@@ -427,14 +437,14 @@ class CompletePipeline:
             ...
         """
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        model_dir = f"models/{pair}/{self.interval}/model_{timestamp}"
+        model_dir = f"models/{pair}/{interval}/model_{timestamp}"
         os.makedirs(model_dir, exist_ok=True)
         
         # 保存 XGBoost
         try:
             joblib.dump(xgb_model, f'{model_dir}/xgboost_model.joblib')
         except Exception as e:
-            print(f"  ⚠ joblib 保存失敖：{e}")
+            print(f"    ⚠ joblib 保存失敖：{e}")
         
         # 保存標籤編碼器
         with open(f'{model_dir}/label_encoder.pkl', 'wb') as f:
@@ -447,7 +457,7 @@ class CompletePipeline:
         # 保存參數
         params = {
             'pair': pair,
-            'interval': self.interval,
+            'interval': interval,
             'depth': self.depth,
             'deviation': self.deviation,
             'backstep': self.backstep,
@@ -468,42 +478,46 @@ class CompletePipeline:
         print("#"*70)
         print(f"\n配置:")
         print(f"  幣種: {', '.join(self.pairs)} ({len(self.pairs)} 個)")
-        print(f"  時間框架: {self.interval}")
+        print(f"  時間框架: {', '.join(self.intervals)} ({len(self.intervals)} 個)")
         print(f"  ZigZag Depth: {self.depth}")
         print(f"  ZigZag Deviation: {self.deviation}%")
         print(f"  ZigZag Backstep: {self.backstep}")
         print(f"  樣本數: {self.sample_size}")
-        print(f"  总模型数: {len(self.pairs)}")
+        print(f"  总模型数: {len(self.pairs) * len(self.intervals)}")
         print()
         
         start_time = datetime.now()
+        total_models = len(self.pairs) * len(self.intervals)
+        current_idx = 0
         
-        for idx, pair in enumerate(self.pairs, 1):
-            print("\n" + "="*70)
-            print(f"[{idx}/{len(self.pairs)}] 訓練 {pair}")
-            print("="*70)
-            
-            try:
-                # 步驟 1: 下載數據
-                df = self.download_data(pair)
-                if df is None:
-                    df = self._generate_sample_data(pair)
+        for pair in self.pairs:
+            for interval in self.intervals:
+                current_idx += 1
+                print("\n" + "="*70)
+                print(f"[{current_idx}/{total_models}] 訓練 {pair} {interval}")
+                print("="*70)
                 
-                # 步驟 2: 提取 ZigZag
-                df_zigzag = self.extract_zigzag(df, pair)
+                try:
+                    # 步驟 1: 下載數據
+                    df = self.download_data(pair, interval)
+                    if df is None:
+                        df = self._generate_sample_data(pair, interval)
+                    
+                    # 步驟 2: 提取 ZigZag
+                    df_zigzag = self.extract_zigzag(df, pair, interval)
+                    
+                    # 步驟 3: 特徵工程
+                    df_features = self.feature_engineering(df_zigzag)
+                    
+                    # 步驟 4: 訓練模型
+                    result = self.train_models(df_features, pair, interval)
+                    if result:
+                        self.train_results.append(result)
+                        print(f"\n  ✓ {pair} {interval} 訓練完成")
+                        print(f"    模型位置: {result['model_dir']}")
                 
-                # 步驟 3: 特徵工程
-                df_features = self.feature_engineering(df_zigzag)
-                
-                # 步驟 4: 訓練模型
-                result = self.train_models(df_features, pair)
-                if result:
-                    self.train_results.append(result)
-                    print(f"\n  ✓ {pair} 訓練完成")
-                    print(f"    模型位置: {result['model_dir']}")
-            
-            except Exception as e:
-                print(f"  × 錯誤: {str(e)[:100]}")
+                except Exception as e:
+                    print(f"  × 錯誤: {str(e)[:100]}")
         
         # 一覽統計
         elapsed = (datetime.now() - start_time).total_seconds()
@@ -512,7 +526,7 @@ class CompletePipeline:
         print("# 訓練統計")
         print("#"*70)
         print(f"\n訊拫:")
-        print(f"  成功: {len(self.train_results)}/{len(self.pairs)}")
+        print(f"  成功: {len(self.train_results)}/{total_models}")
         print(f"  耗時: {elapsed:.1f} 秒 ({elapsed/60:.1f} 分鐘)")
         
         if self.train_results:
@@ -568,8 +582,8 @@ if __name__ == "__main__":
     
     parser.add_argument('--pair', nargs='+', default=['BTCUSDT'],
                         help='交易對: BTCUSDT, ETHUSDT 或 all/ALL/\* 訓練全部 (預設: BTCUSDT)')
-    parser.add_argument('--interval', type=str, default='15m',
-                        help='時間框架: 15m 或 1h (預設: 15m)')
+    parser.add_argument('--interval', nargs='+', default=['15m'],
+                        help='時間框架: 15m 或 1h 或两个 (預設: 15m)')
     parser.add_argument('--depth', type=int, default=12,
                         help='ZigZag Depth 參數 (預設: 12)')
     parser.add_argument('--deviation', type=float, default=0.8,
@@ -577,7 +591,7 @@ if __name__ == "__main__":
     parser.add_argument('--backstep', type=int, default=2,
                         help='ZigZag Backstep 參數 (預設: 2)')
     parser.add_argument('--sample', type=int, default=200000,
-                        help='使用的樣本數 (預設: 200000)')
+                        help='使用的樣本数 (預設: 200000)')
     
     args = parser.parse_args()
     
@@ -590,9 +604,15 @@ if __name__ == "__main__":
     else:
         pair_arg = args.pair
     
+    # 處理 --interval 參數
+    if isinstance(args.interval, list):
+        interval_arg = args.interval
+    else:
+        interval_arg = [args.interval]
+    
     pipeline = CompletePipeline(
         pairs=pair_arg,
-        interval=args.interval,
+        intervals=interval_arg,
         depth=args.depth,
         deviation=args.deviation,
         backstep=args.backstep,
