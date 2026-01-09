@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 批量訓練所有 ZigZag 預測模型
-支持 23 個幣種 × 2 個時間框架 = 46 個模型
+支持 22 個幣種 × 2 個時間框架 = 44 個模型
 
 用法：
   python train_all_models.py
@@ -30,11 +30,11 @@ from sklearn.metrics import accuracy_score, f1_score
 import joblib
 
 
-# 所有可用幣種
+# 所有可用幣種 (22 個)
 ALL_PAIRS = [
     'AAVEUSDT', 'ADAUSDT', 'ALGOUSDT', 'ARBUSDT', 'ATOMUSDT',
     'AVAXUSDT', 'BCHUSDT', 'BNBUSDT', 'BTCUSDT', 'DOGEUSDT',
-    'DOTUSDT', 'ETCUSDT', 'ETHUSDT', 'FILUSDT', 'LINKUSDT',
+    'DOTUSDT', 'ETCUSDT', 'ETHUSDT', 'LINKUSDT',
     'LTCUSDT', 'MATICUSDT', 'NEARUSDT', 'OPUSDT', 'SOLUSDT',
     'UNIUSDT', 'XRPUSDT'
 ]
@@ -78,7 +78,7 @@ class CompletePipelineTrainer:
             
             return df
         except Exception as e:
-            print(f"    下載失敗: {str(e)[:50]}")
+            print(f"    下載失敖: {str(e)[:50]}")
             return None
     
     def extract_zigzag_peaks(self, prices, depth=12, deviation=0.8):
@@ -371,7 +371,7 @@ def main():
                     print(f"{status} Acc: {acc:.4f} F1: {f1:.4f} Samples: {samples:,}")
                     trainer.results.append(result)
                 else:
-                    print(f"{status} 失敗: 數據不足")
+                    print(f"{status} 失敗: 数據不足")
                     failed_count += 1
             except Exception as e:
                 print(f"{status} 錯誤: {str(e)[:40]}")
