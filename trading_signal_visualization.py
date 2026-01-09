@@ -86,7 +86,14 @@ class TradingSignalVisualizer:
         print("="*60)
         
         df = df_features.copy()
-        df = df.dropna()
+        df = df.dropna(subset=['close', 'high', 'low'])
+        
+        # 確保有 swing_type 列
+        if 'swing_type' not in df.columns:
+            df['swing_type'] = ''
+        
+        # 填充 NaN 值
+        df['swing_type'] = df['swing_type'].fillna('')
         
         # 生成預測
         X = df[self.feature_names].values
@@ -96,38 +103,47 @@ class TradingSignalVisualizer:
         # 添加預測列
         df['predicted_signal'] = [self.swing_type_int_to_str[i] for i in y_pred]
         df['confidence'] = np.max(y_pred_proba, axis=1)
-        df['is_pivot'] = df['swing_type'] != ''
         
-        # 計算 K 棒有效性
+        # 確定是否有轉折點
+        df['is_pivot'] = (df['swing_type'] != '').astype(bool)
+        
+        # 初始化有效性列
         df['high_valid'] = False
         df['low_valid'] = False
         
+        # 計算轉折點有效性
         for i in range(1, len(df)):
+            if not df.iloc[i]['is_pivot']:
+                continue
+            
             current_high = df.iloc[i]['high']
             current_low = df.iloc[i]['low']
-            prev_high = df.iloc[i-1]['high']
-            prev_low = df.iloc[i-1]['low']
+            current_type = df.iloc[i]['swing_type']
             
-            # 找到上一個轉折點
+            # 找到前一個轉折點
+            prev_pivot_idx = None
             for j in range(i-1, -1, -1):
-                if df.iloc[j]['swing_type'] != '':
-                    prev_pivot_type = df.iloc[j]['swing_type']
-                    prev_pivot_high = df.iloc[j]['high']
-                    prev_pivot_low = df.iloc[j]['low']
+                if df.iloc[j]['is_pivot']:
+                    prev_pivot_idx = j
                     break
             
-            # 驗證當前點位
-            if df.iloc[i]['swing_type'] != '':
-                if df.iloc[i]['swing_type'] == 'HH':
-                    df.loc[i, 'high_valid'] = current_high > prev_pivot_high
-                elif df.iloc[i]['swing_type'] == 'LL':
-                    df.loc[i, 'low_valid'] = current_low < prev_pivot_low
-                elif df.iloc[i]['swing_type'] == 'LH':
-                    df.loc[i, 'high_valid'] = current_high < prev_pivot_high
-                elif df.iloc[i]['swing_type'] == 'HL':
-                    df.loc[i, 'low_valid'] = current_low > prev_pivot_low
+            if prev_pivot_idx is not None:
+                prev_high = df.iloc[prev_pivot_idx]['high']
+                prev_low = df.iloc[prev_pivot_idx]['low']
+                prev_type = df.iloc[prev_pivot_idx]['swing_type']
+                
+                # 驗證轉折點有效性
+                if current_type == 'HH':
+                    df.loc[i, 'high_valid'] = current_high > prev_high
+                elif current_type == 'LL':
+                    df.loc[i, 'low_valid'] = current_low < prev_low
+                elif current_type == 'LH':
+                    df.loc[i, 'high_valid'] = current_high < prev_high
+                elif current_type == 'HL':
+                    df.loc[i, 'low_valid'] = current_low > prev_low
         
-        df['pivot_valid'] = df['high_valid'] | df['low_valid']
+        # 綜合判斷
+        df['pivot_valid'] = (df['high_valid'] | df['low_valid']) & df['is_pivot']
         
         # 統計結果
         pivot_data = df[df['is_pivot']].copy()
@@ -157,7 +173,7 @@ class TradingSignalVisualizer:
         
         # 保存詳細結果
         signal_data = df[df['is_pivot']][[
-            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'open', 'high', 'low', 'close', 'volume',
             'swing_type', 'predicted_signal', 'confidence',
             'high_valid', 'low_valid', 'pivot_valid'
         ]].copy()
@@ -191,7 +207,7 @@ class TradingSignalVisualizer:
         ax1.plot(range(len(df)), df['close'], color='black', linewidth=1, label='收盤價', alpha=0.7)
         ax1.fill_between(range(len(df)), df['low'], df['high'], alpha=0.2, color='gray')
         
-        # 標記有效轉折點
+        # 獲取轉折點數據
         pivot_data = df[df['is_pivot']].copy()
         
         # HH (更高高點) - 綠色上三角
@@ -274,7 +290,7 @@ class TradingSignalVisualizer:
         
         ax2.set_xlabel('轉折點類型')
         ax2.set_ylabel('數量')
-        ax2.set_title('轉折點有效性分佈', fontsize=12, fontweight='bold')
+        ax2.set_title('轉折點有效性分布', fontsize=12, fontweight='bold')
         ax2.set_xticks(x)
         ax2.set_xticklabels(types)
         ax2.legend()
@@ -312,7 +328,7 @@ class TradingSignalVisualizer:
             ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
                     f'{rate:.1f}%', ha='center', va='bottom', fontweight='bold')
         
-        # 4. 置信度分佈
+        # 4. 置信度分布
         ax4 = plt.subplot(3, 2, 5)
         
         valid_confidence = df[df['pivot_valid'] & df['is_pivot']]['confidence']
@@ -325,7 +341,7 @@ class TradingSignalVisualizer:
         
         ax4.set_xlabel('預測置信度')
         ax4.set_ylabel('頻率')
-        ax4.set_title('有效/無效預測的置信度分佈', fontsize=12, fontweight='bold')
+        ax4.set_title('有效/無效預測的置信度分布', fontsize=12, fontweight='bold')
         ax4.legend()
         ax4.grid(True, alpha=0.3, axis='y')
         
