@@ -114,7 +114,7 @@ class ZigZagHybridModel:
             
             layers.Dense(32, activation='relu'),
             
-            # 輸出层
+            # 輸出層
             layers.Dense(self.n_classes, activation='softmax')
         ])
         
@@ -234,12 +234,15 @@ class ZigZagHybridModel:
 def validate_data_integrity(df: pd.DataFrame, label_encoder):
     """
     驗證數據完整性,防止數據洩漏
+    
+    重要: 此函數棄清的是有效swing_type的行數,而不是所有行
     """
     print("\n" + "="*60)
     print("數據完整性驗證")
     print("="*60)
     
-    pivot_mask = df['zigzag'].notna()
+    # 關鍵: 棄清的是有效swing_type的行（即真實轉折點）
+    pivot_mask = df['swing_type'].notna() & (df['swing_type'] != '')
     pivot_count = pivot_mask.sum()
     total_count = len(df)
     pivot_ratio = (pivot_count / total_count * 100) if total_count > 0 else 0
@@ -253,12 +256,12 @@ def validate_data_integrity(df: pd.DataFrame, label_encoder):
         print("\n⚠ 警告: 轉折點比例 > 5%")
         print("這可能表示存在數據洩漏問題!")
         print("請檢查:")
-        print("  1. ZigZag參數需要調整")
-        print("  2. 是否誤用了--all-data參數")
+        print("  1. ZigZag參數是否合理")
+        print("  2. 是否誤用了--all-data參數導致過度標記")
         return False
     elif pivot_ratio < 0.5:
         print("\n⚠ 警告: 轉折點比例 < 0.5%")
-        print("轉折點提取可能太嚴格,考慠放寬满ZigZag參數")
+        print("轉折點提取可能太嚴格,考慠可放寬满 Deviation 參數")
         return False
     else:
         print("\n✓ 轉折點比例正常")
