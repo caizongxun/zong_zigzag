@@ -140,7 +140,8 @@ class CompletePipeline:
         # 生成時間序列
         dates = pd.date_range(end=datetime.now(), periods=n_records, freq='15min')
         
-        # 生成價格數據（帶趨勢和隨機性）n = np.arange(n_records)
+        # 生成價格數據（帶趨勢和隨機性）
+        n = np.arange(n_records)
         trend = 40000 + 0.1 * n
         noise = np.random.randn(n_records) * 200
         close = trend + noise
@@ -154,6 +155,7 @@ class CompletePipeline:
             'volume': np.random.uniform(1000, 5000, n_records),
         })
         
+        # 確保高低點的邏輯正確
         df = df[df['high'] >= df['low']].reset_index(drop=True)
         df = df[df['high'] >= df['close']].reset_index(drop=True)
         df = df[df['low'] <= df['close']].reset_index(drop=True)
