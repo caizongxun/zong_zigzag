@@ -7,7 +7,7 @@ ZigZag 完整訓練管算
 import pandas as pd
 import numpy as np
 import pickle
-import json
+import json as json_lib
 import argparse
 from datetime import datetime
 import warnings
@@ -126,7 +126,7 @@ class CompletePipeline:
             return df
         else:
             # 備用方案：生成模擬數據用於演示
-            print("\n警告：無法下載實際数據，使用模擬數據進行演示...")
+            print("\n警告：無法下載實際數據，使用模擬數據進行演示...")
             return self._generate_sample_data()
     
     def _generate_sample_data(self):
@@ -354,7 +354,7 @@ class CompletePipeline:
                 df_features, test_size=0.2, verbose=True
             )
         except ImportError:
-            print("\n使用基礎数據準備...")
+            print("\n使用基礎數據準備...")
             X_train, X_test, y_train, y_test, feature_names, label_encoder = self._basic_prepare_data(df_features)
         
         # 驗證數據
@@ -381,7 +381,7 @@ class CompletePipeline:
     
     def _basic_prepare_data(self, df):
         """
-        基礎数據準備
+        基礎數據準備
         """
         from sklearn.preprocessing import LabelEncoder
         from sklearn.model_selection import train_test_split
@@ -424,7 +424,7 @@ class CompletePipeline:
             le = LabelEncoder()
             y = le.fit_transform(df[label_col])
         
-        # 分割数據
+        # 分割數據
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, random_state=42
         )
@@ -482,7 +482,6 @@ class CompletePipeline:
             print(f"⚠ joblib 保存失敖：{e}")
             try:
                 # 方案 2: 使用 XGBoost 的口叨標浜法
-                import json
                 model_json = xgb_model.get_booster().save_raw('json')
                 with open(f'{model_dir}/xgboost_model.json', 'w') as f:
                     f.write(model_json)
@@ -497,7 +496,7 @@ class CompletePipeline:
         
         # 保存特徵名稱
         with open(f'{model_dir}/feature_names.json', 'w') as f:
-            json.dump(feature_names, f, indent=2)
+            json_lib.dump(feature_names, f, indent=2)
         print(f"✓ 特徵名稱: {model_dir}/feature_names.json")
         
         # 保存參數
@@ -511,7 +510,7 @@ class CompletePipeline:
             'timestamp': timestamp
         }
         with open(f'{model_dir}/params.json', 'w') as f:
-            json.dump(params, f, indent=2)
+            json_lib.dump(params, f, indent=2)
         print(f"✓ 參數: {model_dir}/params.json")
         
         print(f"\n✓ 所有模型已保存至: {model_dir}")
