@@ -2,8 +2,9 @@
 """
 ZigZag 實時預測 API 伺服端
 Flask 應用，提供實時市場數據和模型預測
-支援光端選擇幣種和時間框架
-支援每秒自動更新，使用前一根完成的K棒進行預測
+支援全部 38 個幣種
+使用前一根完成的 K 棒進行預測
+顯示無信號、HH、HL、LL、LH 的概率分佈
 
 啟動方法：
   python app.py
@@ -16,6 +17,7 @@ API 端點：
   GET /api/history - 獲取歷史數據
   POST /api/predict - 觸發預測
   GET /api/config - 獲取配置信息
+  GET /api/signal-definitions - 獲取信號定義
   WebSocket /ws - 實時推送信號
 """
 
@@ -56,28 +58,32 @@ app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-# 信號定義 - 明確標示每個代碼的含義
+# 信號定義
 SIGNAL_DEFINITIONS = {
-    0: "HH (Higher High) - 上升趨勢延續，新高",
-    1: "HL (High Low) - 上升轉下降，頭部反轉信號",
-    2: "LH (Low High) - 下降轉上升，底部反轉信號",
-    3: "LL (Lower Low) - 下降趨勢延續，新低"
+    'HOLD': "無信號 - 不符合任何趨勢特徵",
+    'HH': "Higher High - 上升趨勢延續，新高",
+    'HL': "High Low - 上升轉下降，頭部反轉",
+    'LH': "Low High - 下降轉上升，底部反轉",
+    'LL': "Lower Low - 下降趨勢延續，新低"
 }
 
-# 22 個支持的幣種
+# 38 個支持的幣種
 AVAILABLE_PAIRS = [
     'AAVEUSDT', 'ADAUSDT', 'ALGOUSDT', 'ARBUSDT', 'ATOMUSDT',
-    'AVAXUSDT', 'BCHUSDT', 'BNBUSDT', 'BTCUSDT', 'DOGEUSDT',
-    'DOTUSDT', 'ETCUSDT', 'ETHUSDT', 'FILUSDT', 'LINKUSDT',
-    'LTCUSDT', 'MATICUSDT', 'NEARUSDT', 'OPUSDT', 'SOLUSDT',
-    'UNIUSDT', 'XRPUSDT'
+    'AVAXUSDT', 'BALUSDT', 'BATUSDT', 'BCHUSDT', 'BNBUSDT',
+    'BTCUSDT', 'COMPUSDT', 'CRVUSDT', 'DOGEUSDT', 'DOTUSDT',
+    'ENJUSDT', 'ENSUSDT', 'ETCUSDT', 'ETHUSDT', 'FILUSDT',
+    'GALAUSDT', 'GRTUSDT', 'IMXUSDT', 'KAVAUSDT', 'LINKUSDT',
+    'LTCUSDT', 'MANAUSDT', 'MATICUSDT', 'MKRUSDT', 'NEARUSDT',
+    'OPUSDT', 'SANDUSDT', 'SNXUSDT', 'SOLUSDT', 'SPELLUSDT',
+    'UNIUSDT', 'XRPUSDT', 'ZRXUSDT'
 ]
 
 AVAILABLE_INTERVALS = ['15m', '1h']
 
 def convert_to_python_types(obj):
     """
-    遞歸會診 NumPy 類形離义轉換為 Python 粗來類形
+    遞歸會診 NumPy 類形離義轉換為 Python 粗來類形
     目程是 JSON 序列化
     """
     if isinstance(obj, dict):
@@ -100,7 +106,7 @@ class RealTimePredictorService:
     """
     實時預測服務
     負責加載模型、獲取實時數據、進行預測
-    每秒自動更新，使用前一根完成的K棒
+    每秒自動更新，使用前一根完成的 K 棒
     """
     
     def __init__(self):
@@ -110,15 +116,13 @@ class RealTimePredictorService:
         self.params = None
         self.scaler = StandardScaler()
         self.latest_prediction = None
-        self.previous_ohlcv = None  # 前一根K棒
-        self.current_ohlcv = None   # 當前K棒
         self.history = []
         self.update_thread = None
         self.is_running = False
         self.binance_client = None
         self.current_pair = 'BTCUSDT'
         self.current_interval = '15m'
-        self.last_candle_time = None  # 追蹤上一根K棒的時間
+        self.last_candle_time = None
         
         # 初始化 Binance 客戶端
         if BINANCE_AVAILABLE:
@@ -160,7 +164,7 @@ class RealTimePredictorService:
         加載指定幣種和時間框架的模型
         """
         try:
-            # 這一實数据幫下模型目錄
+            # 這一實數據幫下模型目錄
             model_path = f'models/{pair}/{interval}'
             
             if not Path(model_path).exists():
@@ -176,7 +180,7 @@ class RealTimePredictorService:
             model_dir = max(model_dirs, key=lambda x: Path(x).stat().st_mtime)
             print(f"加載模型: {model_dir}")
             
-            # 儯先嘗試 joblib 格式
+            # 嘗試 joblib 格式
             if Path(f'{model_dir}/xgboost_model.joblib').exists():
                 print("  使用 joblib 格式...")
                 self.model = joblib.load(f'{model_dir}/xgboost_model.joblib')
@@ -211,7 +215,7 @@ class RealTimePredictorService:
             
             return True
         except Exception as e:
-            print(f"模型加載失敖: {str(e)}")
+            print(f"模型加載失敗: {str(e)}")
             import traceback
             traceback.print_exc()
             return False
@@ -266,7 +270,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"獲取 Binance 數據失敖: {str(e)}")
+            print(f"獲取 Binance 數據失敗: {str(e)}")
             return None
     
     def get_realtime_data_yfinance(self, pair='BTCUSDT', interval='15m'):
@@ -304,7 +308,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"獲取 yfinance 數據失敖: {str(e)}")
+            print(f"獲取 yfinance 數據失敗: {str(e)}")
             return None
     
     def get_realtime_data(self, pair='BTCUSDT', interval='15m'):
@@ -312,13 +316,13 @@ class RealTimePredictorService:
         獲取實時數據
         選項: Binance (API) -> yfinance (備用)
         """
-        # 儯先使用 Binance API
+        # 嘗試使用 Binance API
         if BINANCE_AVAILABLE:
             df = self.get_realtime_data_binance(pair, interval)
             if df is not None:
                 return df
         
-        # 撤伊 yfinance
+        # 撤回 yfinance
         if YFINANCE_AVAILABLE:
             return self.get_realtime_data_yfinance(pair, interval)
         
@@ -326,8 +330,8 @@ class RealTimePredictorService:
     
     def _zigzag_points(self, prices, depth=12, deviation=0.8):
         """
-        简單 ZigZag 轉折點計算
-        返回轉折點位置的布林陳列
+        簡單 ZigZag 轉折點計算
+        返回轉折點位置的布林陣列
         """
         if len(prices) < depth * 2:
             return np.zeros(len(prices))
@@ -373,7 +377,7 @@ class RealTimePredictorService:
     def extract_zigzag_features(self, df):
         """
         提取 ZigZag 特徵
-        基於最新的 K 棊數據
+        基於最新的 K 棒數據
         
         為保證輸出特徵數量為 11：
         - open
@@ -410,7 +414,7 @@ class RealTimePredictorService:
             return df
         
         except Exception as e:
-            print(f"特徵提取失敖: {str(e)}")
+            print(f"特徵提取失敗: {str(e)}")
             return None
     
     def _calculate_rsi(self, prices, period=14):
@@ -442,28 +446,10 @@ class RealTimePredictorService:
         
         return rsi
     
-    def _get_signal_code_and_description(self, prediction_value):
-        """
-        將預測值映射到信號代碼和描述
-        0: HH, 1: HL, 2: LH, 3: LL
-        """
-        try:
-            signal_code = int(prediction_value)
-            if signal_code not in SIGNAL_DEFINITIONS:
-                signal_code = 0
-        except:
-            signal_code = 0
-        
-        return signal_code, SIGNAL_DEFINITIONS[signal_code]
-    
-    def predict(self, pair='BTCUSDT', interval='15m', use_previous_candle=True):
+    def predict(self, pair='BTCUSDT', interval='15m'):
         """
         進行預測
-        
-        參數:
-            pair: 交易對
-            interval: 時間框架
-            use_previous_candle: 是否使用前一根完成的K棒進行預測
+        使用前一根完成的 K 棒進行預測
         """
         try:
             if self.model is None:
@@ -485,20 +471,22 @@ class RealTimePredictorService:
             if df_features is None:
                 return {
                     'status': 'error',
-                    'message': '特徵提取失敖'
+                    'message': '特徵提取失敗'
                 }
             
-            # 決定使用哪一根K棒
-            if use_previous_candle and len(df_features) >= 2:
-                # 使用前一根完成的K棒
-                analysis_row = df_features.iloc[-2]  # 倒數第二個
+            # 使用前一根完成的 K 棒進行預測
+            if len(df_features) >= 2:
+                # 使用倒數第二個 (前一根完成的)
+                analysis_row = df_features.iloc[-2]
                 candle_type = "前一根"
+                current_candle = df_features.iloc[-1]
             else:
-                # 使用當前K棒
-                analysis_row = df_features.iloc[-1]  # 最後一個
+                # 數據不足時使用最後一個
+                analysis_row = df_features.iloc[-1]
                 candle_type = "當前"
+                current_candle = analysis_row
             
-            # 保存OHLCV數據
+            # 提取 OHLCV 數據
             ohlcv_data = {
                 'timestamp': str(analysis_row['timestamp']),
                 'open': float(analysis_row['open']),
@@ -508,29 +496,31 @@ class RealTimePredictorService:
                 'volume': float(analysis_row['volume']) if pd.notna(analysis_row['volume']) else 0
             }
             
-            if use_previous_candle:
-                self.previous_ohlcv = ohlcv_data
-            else:
-                self.current_ohlcv = ohlcv_data
+            current_ohlcv = {
+                'timestamp': str(current_candle['timestamp']),
+                'open': float(current_candle['open']),
+                'high': float(current_candle['high']),
+                'low': float(current_candle['low']),
+                'close': float(current_candle['close']),
+                'volume': float(current_candle['volume']) if pd.notna(current_candle['volume']) else 0
+            }
             
-            # 準備特徵橢量 - 按照模型訓練時的順序
+            # 準備特徵矩陣
             feature_cols = [col for col in self.feature_names if col in df_features.columns]
             
-            # 剪槍記風黱: 有五個特徵沒有對應的欄
+            # 檢查缺失特徵
             missing_features = [f for f in self.feature_names if f not in df_features.columns]
             if missing_features:
-                print(f"警告: 特徵 {missing_features} 不存在整個數據褒藤中")
+                print(f"警告: 特徵 {missing_features} 不存在整個數據框架中")
             
-            # 按照預測標整順溏提取
-            X_raw = df_features.iloc[-1:][feature_cols].values
+            # 按照預測標準提取
+            X_raw = df_features.iloc[-2:-1][feature_cols].values if len(df_features) >= 2 else df_features.iloc[-1:][feature_cols].values
             
-            # 如果特徵數量不灆，沒有適當的特徵就填 0
+            # 如果特徵數量不符，沒有適當的特徵就填 0
             if X_raw.shape[1] != len(self.feature_names):
                 print(f"特徵數量不匹配: {X_raw.shape[1]} vs {len(self.feature_names)}")
-                print(f"  存在的特徵: {feature_cols}")
-                print(f"  標浪之特徵: {self.feature_names}")
                 
-                # 建策整個整物特徵橢量，沒有的就填 0
+                # 建策整個整物特徵矩陣，沒有的就填 0
                 X_padded = np.zeros((1, len(self.feature_names)))
                 for i, feat in enumerate(self.feature_names):
                     if feat in feature_cols:
@@ -548,35 +538,55 @@ class RealTimePredictorService:
             pred_label = self.label_encoder.inverse_transform([y_pred])[0]
             confidence = float(np.max(y_pred_proba))
             
-            # 獲取信號代碼和描述
-            signal_code, signal_description = self._get_signal_code_and_description(pred_label)
+            # 獲取所有類別的概率
+            classes = self.label_encoder.classes_
+            class_probs = {
+                str(cls): float(prob) 
+                for cls, prob in zip(classes, y_pred_proba)
+            }
             
-            # 判斷是否應該 HOLD
+            # 計算各信號的概率
+            signal_probabilities = {
+                'HH': 0.0,
+                'HL': 0.0,
+                'LH': 0.0,
+                'LL': 0.0,
+                'HOLD': 0.0
+            }
+            
+            # 將類別概率映射到信號
+            for cls_name, prob in class_probs.items():
+                if cls_name in signal_probabilities:
+                    signal_probabilities[cls_name] = prob
+                elif cls_name == '':
+                    signal_probabilities['HOLD'] += prob
+            
+            # 如果沒有明確信號，視為 HOLD
             if confidence < 0.6:
-                signal = 'HOLD'
-                signal_code = -1
+                main_signal = 'HOLD'
+                main_signal_prob = 1.0 - confidence
             else:
-                signal = f"{signal_code}_{['HH', 'HL', 'LH', 'LL'][signal_code]}"
-            
-            # 將 label_encoder.classes_ 轉換為 Python 類形
-            class_labels = [str(label) for label in self.label_encoder.classes_]
+                # 找出信心度最高的信號
+                max_signal = max(signal_probabilities, key=signal_probabilities.get)
+                if max_signal == 'HOLD':
+                    main_signal = 'HOLD'
+                    main_signal_prob = signal_probabilities['HOLD']
+                else:
+                    main_signal = max_signal
+                    main_signal_prob = signal_probabilities[max_signal]
             
             self.latest_prediction = {
                 'timestamp': datetime.now().isoformat(),
                 'pair': pair,
                 'interval': interval,
-                'signal_code': signal_code,
-                'signal_name': ['HH', 'HL', 'LH', 'LL'][signal_code] if signal_code >= 0 else 'HOLD',
-                'signal_description': signal_description if signal_code >= 0 else 'Hold Position',
-                'predicted_type': str(pred_label),
+                'main_signal': main_signal,
+                'main_signal_description': SIGNAL_DEFINITIONS.get(main_signal, '無信號'),
                 'confidence': confidence,
+                'signal_probabilities': signal_probabilities,
                 'ohlcv': ohlcv_data,
+                'current_ohlcv': current_ohlcv,
                 'candle_type': candle_type,
-                'based_on': 'previous_candle' if use_previous_candle else 'current_candle',
-                'all_probabilities': {
-                    class_labels[idx]: float(prob) 
-                    for idx, prob in enumerate(y_pred_proba)
-                }
+                'based_on': 'previous_candle'
             }
             
             # 添加到歷史
@@ -591,7 +601,7 @@ class RealTimePredictorService:
             }
         
         except Exception as e:
-            print(f"預測失敖: {str(e)}")
+            print(f"預測失敗: {str(e)}")
             import traceback
             traceback.print_exc()
             return {
@@ -618,11 +628,11 @@ class RealTimePredictorService:
     
     def _auto_update_loop(self, pair, interval, update_interval):
         """
-        自動更新趨環 - 每秒執行一次，使用前一根K棒
+        自動更新迴圈 - 每秒執行一次，使用前一根 K 棒
         """
         while self.is_running:
             try:
-                self.predict(pair, interval, use_previous_candle=True)
+                self.predict(pair, interval)
                 
                 # 通過 WebSocket 推送最新信號到所有連接的客戶端
                 if self.latest_prediction:
@@ -666,7 +676,8 @@ def get_pairs():
     return jsonify({
         'status': 'success',
         'pairs': AVAILABLE_PAIRS,
-        'intervals': AVAILABLE_INTERVALS
+        'intervals': AVAILABLE_INTERVALS,
+        'count': len(AVAILABLE_PAIRS)
     })
 
 
@@ -746,14 +757,13 @@ def predict():
     """觸發預測"""
     pair = request.json.get('pair', 'BTCUSDT')
     interval = request.json.get('interval', '15m')
-    use_previous = request.json.get('use_previous_candle', True)
     
     # 檢查模型是否匹配
     if predictor_service.current_pair != pair or predictor_service.current_interval != interval:
         # 需要加載新模型
         predictor_service.load_model(pair, interval)
     
-    result = predictor_service.predict(pair, interval, use_previous_candle=use_previous)
+    result = predictor_service.predict(pair, interval)
     # 轉換為 Python 類形
     result = convert_to_python_types(result)
     return jsonify(result)
@@ -793,7 +803,7 @@ def get_signal_definitions():
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """健康检查"""
+    """健康檢查"""
     return jsonify({
         'status': 'ok',
         'model_loaded': predictor_service.model is not None,
@@ -842,8 +852,9 @@ if __name__ == '__main__':
     print("API: http://localhost:5000/api/latest")
     print("WebSocket: ws://localhost:5000/socket.io")
     print("特徵: 每秒自動更新，使用前一根K棒進行預測")
-    print("信號: 0=HH, 1=HL, 2=LH, 3=LL")
+    print("信號: 0=HH, 1=HL, 2=LH, 3=LL, HOLD=無信號")
     print("模式: Binance API 優先, yfinance 備用")
+    print("支持: 38 個幣種 + 2 個時間框架")
     print("="*60 + "\n")
     
     try:
