@@ -264,9 +264,13 @@ class RealTimePredictorService:
             df['low'] = df['low'].astype(float)
             df['close'] = df['close'].astype(float)
             df['volume'] = df['volume'].astype(float)
+            df['quote_asset_volume'] = df['quote_asset_volume'].astype(float)
+            df['number_of_trades'] = df['number_of_trades'].astype(float)
+            df['taker_buy_base_asset_volume'] = df['taker_buy_base_asset_volume'].astype(float)
+            df['taker_buy_quote_asset_volume'] = df['taker_buy_quote_asset_volume'].astype(float)
             
-            # 僅保留需要的欄位（不保留 Binance 的額外欄位）
-            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+            # 保留所有 9 個基本欄位
+            df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume', 'quote_asset_volume', 'number_of_trades', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume']]
             
             return df
         
@@ -305,6 +309,12 @@ class RealTimePredictorService:
             df.columns = ['open', 'high', 'low', 'close', 'volume']
             df.index.name = 'timestamp'
             df = df.reset_index()
+            
+            # yfinance 不提供额外數據，填充 0
+            df['quote_asset_volume'] = 0.0
+            df['number_of_trades'] = 0.0
+            df['taker_buy_base_asset_volume'] = 0.0
+            df['taker_buy_quote_asset_volume'] = 0.0
             
             return df
         
@@ -380,12 +390,16 @@ class RealTimePredictorService:
         提取 ZigZag 特徵
         基於最新的 K 棒數據
         
-        輸出特徵數量為 11 個:
+        輸出特徵數量為 15 個:
         - open
         - high
         - low
         - close
         - volume
+        - quote_asset_volume
+        - number_of_trades
+        - taker_buy_base_asset_volume
+        - taker_buy_quote_asset_volume
         - zigzag (轉折點指標)
         - returns
         - volatility
@@ -506,8 +520,8 @@ class RealTimePredictorService:
                 'volume': float(current_candle['volume']) if pd.notna(current_candle['volume']) else 0
             }
             
-            # 提取 11 個特徵（訓練時使用的標準特徵集）
-            feature_cols = ['open', 'high', 'low', 'close', 'volume', 'zigzag', 'returns', 'volatility', 'momentum', 'rsi', 'macd']
+            # 抽取 15 個特徵（訓練時使用的標準特徵集）
+            feature_cols = ['open', 'high', 'low', 'close', 'volume', 'quote_asset_volume', 'number_of_trades', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'zigzag', 'returns', 'volatility', 'momentum', 'rsi', 'macd']
             
             # 驗證特徵是否存在
             available_features = [col for col in feature_cols if col in df_features.columns]
@@ -860,7 +874,7 @@ if __name__ == '__main__':
     print("信號: HOLD, HH, HL, LH, LL")
     print("模式: Binance API 優先, yfinance 備用")
     print("支持: 38 個幣種 + 2 個時間框架")
-    print("特徵: 11 個 (open/high/low/close/volume/zigzag/returns/volatility/momentum/rsi/macd)")
+    print("特徵: 15 個 (open/high/low/close/volume/quote_asset_volume/number_of_trades/taker_buy_base_asset_volume/taker_buy_quote_asset_volume/zigzag/returns/volatility/momentum/rsi/macd)")
     print("="*60 + "\n")
     
     try:
