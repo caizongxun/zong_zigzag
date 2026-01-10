@@ -46,6 +46,46 @@
             letter-spacing: 0.5px;
         }
 
+        .tab-navigation {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            border-bottom: 2px solid #334155;
+            animation: fadeInDown 0.6s ease-out;
+        }
+
+        .tab-button {
+            padding: 14px 24px;
+            background: transparent;
+            border: none;
+            color: #94a3b8;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border-bottom: 3px solid transparent;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .tab-button:hover {
+            color: #cbd5e1;
+        }
+
+        .tab-button.active {
+            color: #00d4ff;
+            border-bottom-color: #00d4ff;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeInUp 0.3s ease-out;
+        }
+
         .main-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -197,6 +237,15 @@
 
         .btn-stop:hover {
             box-shadow: 0 10px 30px rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-refresh {
+            background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+            color: white;
+        }
+
+        .btn-refresh:hover {
+            box-shadow: 0 10px 30px rgba(59, 130, 246, 0.3);
         }
 
         button:disabled {
@@ -478,9 +527,236 @@
             }
         }
 
+        /* 所有幣種狀態表格樣式 */
+        .coins-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .coins-table thead {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            border-bottom: 2px solid #334155;
+        }
+
+        .coins-table th {
+            padding: 16px;
+            text-align: left;
+            font-weight: 600;
+            color: #00d4ff;
+            text-transform: uppercase;
+            font-size: 0.9em;
+            letter-spacing: 0.5px;
+        }
+
+        .coins-table tbody tr {
+            border-bottom: 1px solid #334155;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .coins-table tbody tr:hover {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            transform: scale(1.01);
+        }
+
+        .coins-table td {
+            padding: 16px;
+            color: #cbd5e1;
+            font-size: 0.95em;
+        }
+
+        .coin-name {
+            font-weight: 600;
+            color: #e2e8f0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .signal-cell {
+            font-weight: 700;
+            text-align: center;
+            padding: 8px 12px;
+            border-radius: 8px;
+            width: fit-content;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .signal-cell.HH {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .signal-cell.HL {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .signal-cell.LH {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
+        .signal-cell.LL {
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+            color: white;
+        }
+
+        .signal-cell.HOLD {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            color: #0f172a;
+        }
+
+        .signal-cell.LOADING {
+            background: rgba(0, 212, 255, 0.2);
+            color: #00d4ff;
+            animation: pulse 1.5s infinite;
+        }
+
+        .confidence-cell {
+            font-weight: 600;
+            color: #00d4ff;
+            font-family: 'Courier New', monospace;
+        }
+
+        .coins-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .coin-card {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 16px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+        }
+
+        .coin-card:hover {
+            border-color: #00d4ff;
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px rgba(0, 212, 255, 0.2);
+        }
+
+        .coin-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .coin-card-name {
+            font-weight: 700;
+            color: #e2e8f0;
+            font-size: 1.1em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .coin-card-signal {
+            font-weight: 700;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .coin-card-signal.HH {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .coin-card-signal.HL {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+
+        .coin-card-signal.LH {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+
+        .coin-card-signal.LL {
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+            color: white;
+        }
+
+        .coin-card-signal.HOLD {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            color: #0f172a;
+        }
+
+        .coin-card-signal.LOADING {
+            background: rgba(0, 212, 255, 0.2);
+            color: #00d4ff;
+            animation: pulse 1.5s infinite;
+        }
+
+        .coin-card-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            font-size: 0.85em;
+        }
+
+        .coin-card-item {
+            background: rgba(0, 212, 255, 0.05);
+            padding: 8px;
+            border-radius: 6px;
+            border-left: 2px solid #00d4ff;
+        }
+
+        .coin-card-item-label {
+            color: #64748b;
+            font-size: 0.75em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .coin-card-item-value {
+            color: #00d4ff;
+            font-weight: 600;
+            font-family: 'Courier New', monospace;
+        }
+
+        .loading-container {
+            text-align: center;
+            padding: 40px;
+            color: #64748b;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid #334155;
+            border-top: 4px solid #00d4ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
         @media (max-width: 1200px) {
             .data-grid {
                 grid-template-columns: repeat(2, 1fr);
+            }
+
+            .coins-grid {
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
             }
         }
 
@@ -509,6 +785,14 @@
                 font-size: 2em;
                 padding: 25px 35px;
                 min-width: auto;
+            }
+
+            .tab-navigation {
+                flex-wrap: wrap;
+            }
+
+            .coins-grid {
+                grid-template-columns: 1fr;
             }
         }
 
@@ -543,131 +827,158 @@
             <p>一 AI 驅動的加密貨幣交易信號系統</p>
         </div>
 
-        <!-- 主要网格 -->
-        <div class="main-grid">
-            <!-- 配置卡片 -->
-            <div class="card">
-                <h2>⛔ 交易配置</h2>
-                <div class="config-section">
-                    <div class="form-group">
-                        <label>交易對</label>
-                        <select id="pair">
-                            <option value="AAVEUSDT">Aave (AAVE)</option>
-                            <option value="ADAUSDT">Cardano (ADA)</option>
-                            <option value="ALGOUSDT">Algorand (ALGO)</option>
-                            <option value="ARBUSDT">Arbitrum (ARB)</option>
-                            <option value="ATOMUSDT">Cosmos (ATOM)</option>
-                            <option value="AVAXUSDT">Avalanche (AVAX)</option>
-                            <option value="BCHUSDT">Bitcoin Cash (BCH)</option>
-                            <option value="BNBUSDT">Binance Coin (BNB)</option>
-                            <option value="BTCUSDT" selected>Bitcoin (BTC)</option>
-                            <option value="DOGEUSDT">Dogecoin (DOGE)</option>
-                            <option value="DOTUSDT">Polkadot (DOT)</option>
-                            <option value="ETCUSDT">Ethereum Classic (ETC)</option>
-                            <option value="ETHUSDT">Ethereum (ETH)</option>
-                            <option value="FILUSDT">Filecoin (FIL)</option>
-                            <option value="LINKUSDT">Chainlink (LINK)</option>
-                            <option value="LTCUSDT">Litecoin (LTC)</option>
-                            <option value="MATICUSDT">Polygon (MATIC)</option>
-                            <option value="NEARUSDT">NEAR Protocol (NEAR)</option>
-                            <option value="OPUSDT">Optimism (OP)</option>
-                            <option value="SOLUSDT">Solana (SOL)</option>
-                            <option value="UNIUSDT">Uniswap (UNI)</option>
-                            <option value="XRPUSDT">XRP</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>時間框架</label>
-                        <select id="interval">
-                            <option value="15m" selected>15 分鐘</option>
-                            <option value="1h">1 小時</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div class="button-group">
-                    <button class="btn-predict" onclick="predictNow()">🔮 預測一次</button>
-                    <button class="btn-start" onclick="startAutoUpdate()">▶ 自動更新</button>
-                    <button class="btn-stop" onclick="stopAutoUpdate()">⏹ 停止</button>
-                </div>
-
-                <div id="statusMessage"></div>
-            </div>
-
-            <!-- 系統狀態卡片 -->
-            <div class="card">
-                <h2>⚠ 系統狀態</h2>
-                <div class="data-grid" style="grid-template-columns: 1fr 1fr;">
-                    <div class="data-item">
-                        <label>模式狀態</label>
-                        <div class="value" id="modelStatus">✍ 加載中...</div>
-                    </div>
-                    <div class="data-item">
-                        <label>上次更新</label>
-                        <div class="value" id="lastUpdate">--:--:--</div>
-                    </div>
-                    <div class="data-item">
-                        <label>預測次數</label>
-                        <div class="value" id="predictionCount">0</div>
-                    </div>
-                    <div class="data-item">
-                        <label>自動更新</label>
-                        <div class="value" id="autoUpdateStatus">⚠ 已停止</div>
-                    </div>
-                </div>
-            </div>
+        <!-- Tab 導航 -->
+        <div class="tab-navigation">
+            <button class="tab-button active" onclick="switchTab('single-coin')">🔮 單幣種預測</button>
+            <button class="tab-button" onclick="switchTab('all-coins')">📊 全幣種狀態</button>
         </div>
 
-        <!-- 預測結果卡片 -->
-        <div class="card">
-            <h2>✩ 最新預測結果</h2>
-            <div class="prediction-display">
-                <div id="signalDisplay" class="signal-badge HOLD">⚠ HOLD</div>
-                
-                <div class="confidence-meter">
-                    <div class="confidence-label">
-                        <span>置信度</span>
-                        <span id="confidencePercent">0%</span>
+        <!-- Tab 1: 單幣種預測 -->
+        <div id="single-coin" class="tab-content active">
+            <!-- 主要网格 -->
+            <div class="main-grid">
+                <!-- 配置卡片 -->
+                <div class="card">
+                    <h2>⛔ 交易配置</h2>
+                    <div class="config-section">
+                        <div class="form-group">
+                            <label>交易對</label>
+                            <select id="pair">
+                                <option value="AAVEUSDT">Aave (AAVE)</option>
+                                <option value="ADAUSDT">Cardano (ADA)</option>
+                                <option value="ALGOUSDT">Algorand (ALGO)</option>
+                                <option value="ARBUSDT">Arbitrum (ARB)</option>
+                                <option value="ATOMUSDT">Cosmos (ATOM)</option>
+                                <option value="AVAXUSDT">Avalanche (AVAX)</option>
+                                <option value="BCHUSDT">Bitcoin Cash (BCH)</option>
+                                <option value="BNBUSDT">Binance Coin (BNB)</option>
+                                <option value="BTCUSDT" selected>Bitcoin (BTC)</option>
+                                <option value="DOGEUSDT">Dogecoin (DOGE)</option>
+                                <option value="DOTUSDT">Polkadot (DOT)</option>
+                                <option value="ETCUSDT">Ethereum Classic (ETC)</option>
+                                <option value="ETHUSDT">Ethereum (ETH)</option>
+                                <option value="FILUSDT">Filecoin (FIL)</option>
+                                <option value="LINKUSDT">Chainlink (LINK)</option>
+                                <option value="LTCUSDT">Litecoin (LTC)</option>
+                                <option value="MATICUSDT">Polygon (MATIC)</option>
+                                <option value="NEARUSDT">NEAR Protocol (NEAR)</option>
+                                <option value="OPUSDT">Optimism (OP)</option>
+                                <option value="SOLUSDT">Solana (SOL)</option>
+                                <option value="UNIUSDT">Uniswap (UNI)</option>
+                                <option value="XRPUSDT">XRP</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>時間框架</label>
+                            <select id="interval">
+                                <option value="15m" selected>15 分鐘</option>
+                                <option value="1h">1 小時</option>
+                            </select>
+                        </div>
                     </div>
-                    <div class="confidence-bar">
-                        <div class="confidence-fill" id="confidenceFill" style="width: 0%">
-                            <span id="confidenceText">0%</span>
+
+                    <div class="button-group">
+                        <button class="btn-predict" onclick="predictNow()">🔮 預測一次</button>
+                        <button class="btn-start" onclick="startAutoUpdate()">▶ 自動更新</button>
+                        <button class="btn-stop" onclick="stopAutoUpdate()">⏹ 停止</button>
+                    </div>
+
+                    <div id="statusMessage"></div>
+                </div>
+
+                <!-- 系統狀態卡片 -->
+                <div class="card">
+                    <h2>⚠ 系統狀態</h2>
+                    <div class="data-grid" style="grid-template-columns: 1fr 1fr;">
+                        <div class="data-item">
+                            <label>模式狀態</label>
+                            <div class="value" id="modelStatus">✍ 加載中...</div>
+                        </div>
+                        <div class="data-item">
+                            <label>上次更新</label>
+                            <div class="value" id="lastUpdate">--:--:--</div>
+                        </div>
+                        <div class="data-item">
+                            <label>預測次數</label>
+                            <div class="value" id="predictionCount">0</div>
+                        </div>
+                        <div class="data-item">
+                            <label>自動更新</label>
+                            <div class="value" id="autoUpdateStatus">⚠ 已停止</div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- 實時數據 -->
-            <div class="data-grid" id="ohlcvData" style="display: none;">
-                <div class="data-item">
-                    <label>開皀價</label>
-                    <div class="value" id="openPrice">--</div>
+            <!-- 預測結果卡片 -->
+            <div class="card">
+                <h2>✩ 最新預測結果</h2>
+                <div class="prediction-display">
+                    <div id="signalDisplay" class="signal-badge HOLD">⚠ HOLD</div>
+                    
+                    <div class="confidence-meter">
+                        <div class="confidence-label">
+                            <span>置信度</span>
+                            <span id="confidencePercent">0%</span>
+                        </div>
+                        <div class="confidence-bar">
+                            <div class="confidence-fill" id="confidenceFill" style="width: 0%">
+                                <span id="confidenceText">0%</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="data-item">
-                    <label>收盤價</label>
-                    <div class="value" id="closePrice">--</div>
+
+                <!-- 實時數據 -->
+                <div class="data-grid" id="ohlcvData" style="display: none;">
+                    <div class="data-item">
+                        <label>開皀價</label>
+                        <div class="value" id="openPrice">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>收盤價</label>
+                        <div class="value" id="closePrice">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>最高價</label>
+                        <div class="value" id="highPrice">--</div>
+                    </div>
+                    <div class="data-item">
+                        <label>最低價</label>
+                        <div class="value" id="lowPrice">--</div>
+                    </div>
                 </div>
-                <div class="data-item">
-                    <label>最高價</label>
-                    <div class="value" id="highPrice">--</div>
+
+                <!-- 機率分佈 -->
+                <div class="probabilities" id="probabilitiesDisplay" style="display: none;">
+                    <h3>📊 Swing Type 機率分佈</h3>
+                    <div id="probsList"></div>
                 </div>
-                <div class="data-item">
-                    <label>最低價</label>
-                    <div class="value" id="lowPrice">--</div>
+
+                <!-- 時間戳 -->
+                <div class="timestamp" id="timestamp"></div>
+
+                <!-- 提示消息 -->
+                <div id="messageDisplay"></div>
+            </div>
+        </div>
+
+        <!-- Tab 2: 全幣種狀態 -->
+        <div id="all-coins" class="tab-content">
+            <div class="card">
+                <h2>📊 全幣種實時狀態</h2>
+                <div style="margin-bottom: 20px;">
+                    <button class="btn-refresh" onclick="fetchAllCoinsStatus()" style="width: 200px;">🔄 刷新狀態</button>
+                    <button class="btn-predict" onclick="predictAllCoins()" style="width: 200px; margin-left: 10px;">⚡ 全幣預測</button>
+                </div>
+
+                <div id="allCoinsContainer" class="coins-grid">
+                    <div class="loading-container">
+                        <div class="loading-spinner"></div>
+                        <p>正在載入幣種狀態...</p>
+                    </div>
                 </div>
             </div>
-
-            <!-- 機率分佈 -->
-            <div class="probabilities" id="probabilitiesDisplay" style="display: none;">
-                <h3>📊 Swing Type 機率分佈</h3>
-                <div id="probsList"></div>
-            </div>
-
-            <!-- 時間戳 -->
-            <div class="timestamp" id="timestamp"></div>
-
-            <!-- 提示消息 -->
-            <div id="messageDisplay"></div>
         </div>
     </div>
 
@@ -675,6 +986,27 @@
         let predictionCount = 0;
         let autoUpdateInterval = null;
         let isAutoUpdating = false;
+        let allCoinsData = {};
+
+        // Tab 切換
+        function switchTab(tabName) {
+            // 隱藏所有 tab
+            const tabs = document.querySelectorAll('.tab-content');
+            tabs.forEach(tab => tab.classList.remove('active'));
+
+            // 取消激活所有按鈕
+            const buttons = document.querySelectorAll('.tab-button');
+            buttons.forEach(btn => btn.classList.remove('active'));
+
+            // 顯示選中的 tab 和激活按鈕
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+
+            // 如果是全幣種頁面，自動載入
+            if (tabName === 'all-coins') {
+                fetchAllCoinsStatus();
+            }
+        }
 
         // 更新時間戳
         function updateTimestamp() {
@@ -694,7 +1026,7 @@
             predictionCount++;
 
             // 1. 更新信號
-            const signal = pred.signal || 'HOLD';
+            const signal = pred.main_signal || 'HOLD';
             const signalElement = document.getElementById('signalDisplay');
             
             if (!signalElement.textContent.includes(signal)) {
@@ -747,12 +1079,12 @@
             }
 
             // 5. 更新機率
-            if (pred.all_probabilities) {
+            if (pred.signal_probabilities) {
                 document.getElementById('probabilitiesDisplay').style.display = 'block';
                 const probsList = document.getElementById('probsList');
                 probsList.innerHTML = '';
                 
-                for (const [label, prob] of Object.entries(pred.all_probabilities)) {
+                for (const [label, prob] of Object.entries(pred.signal_probabilities)) {
                     const probPercent = (prob * 100).toFixed(1);
                     const probItem = document.createElement('div');
                     probItem.className = 'prob-item';
@@ -835,6 +1167,95 @@
                 clearInterval(autoUpdateInterval);
                 autoUpdateInterval = null;
             }
+        }
+
+        // 獲取所有幣種狀態
+        async function fetchAllCoinsStatus() {
+            const container = document.getElementById('allCoinsContainer');
+            container.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><p>正在載入所有幣種狀態...</p></div>';
+
+            try {
+                const response = await fetch('/api/all-coins-status');
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    renderCoinsGrid(data.data);
+                } else {
+                    container.innerHTML = `<div class="error-message" style="grid-column: 1/-1;">❌ 載入失敗: ${data.message}</div>`;
+                }
+            } catch (error) {
+                container.innerHTML = `<div class="error-message" style="grid-column: 1/-1;">❌ 網路錯誤: ${error.message}</div>`;
+            }
+        }
+
+        // 預測所有幣種
+        async function predictAllCoins() {
+            const container = document.getElementById('allCoinsContainer');
+            container.innerHTML = '<div class="loading-container"><div class="loading-spinner"></div><p>正在預測所有幣種...</p></div>';
+
+            try {
+                const response = await fetch('/api/predict-all-coins', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({})
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    renderCoinsGrid(data.data);
+                } else {
+                    container.innerHTML = `<div class="error-message" style="grid-column: 1/-1;">❌ 預測失敗: ${data.message}</div>`;
+                }
+            } catch (error) {
+                container.innerHTML = `<div class="error-message" style="grid-column: 1/-1;">❌ 網路錯誤: ${error.message}</div>`;
+            }
+        }
+
+        // 渲染幣種網格
+        function renderCoinsGrid(coinsData) {
+            const container = document.getElementById('allCoinsContainer');
+            container.innerHTML = '';
+
+            const entries = Array.isArray(coinsData) ? coinsData : Object.entries(coinsData).map(([pair, data]) => ({ pair, ...data }));
+
+            entries.forEach(item => {
+                const pair = item.pair || item[0];
+                const data = item.data || item;
+                const signal = data.main_signal || 'LOADING';
+                const confidence = data.confidence ? (data.confidence * 100).toFixed(1) : '--';
+
+                const card = document.createElement('div');
+                card.className = 'coin-card';
+                card.innerHTML = `
+                    <div class="coin-card-header">
+                        <div class="coin-card-name">${pair}</div>
+                        <div class="coin-card-signal ${signal}">${signal}</div>
+                    </div>
+                    <div class="coin-card-info">
+                        <div class="coin-card-item">
+                            <div class="coin-card-item-label">置信度</div>
+                            <div class="coin-card-item-value">${confidence}%</div>
+                        </div>
+                        <div class="coin-card-item">
+                            <div class="coin-card-item-label">收盤價</div>
+                            <div class="coin-card-item-value">${data.ohlcv ? data.ohlcv.close.toFixed(2) : '--'}</div>
+                        </div>
+                        <div class="coin-card-item">
+                            <div class="coin-card-item-label">最高價</div>
+                            <div class="coin-card-item-value">${data.ohlcv ? data.ohlcv.high.toFixed(2) : '--'}</div>
+                        </div>
+                        <div class="coin-card-item">
+                            <div class="coin-card-item-label">最低價</div>
+                            <div class="coin-card-item-value">${data.ohlcv ? data.ohlcv.low.toFixed(2) : '--'}</div>
+                        </div>
+                    </div>
+                `;
+
+                container.appendChild(card);
+            });
         }
 
         // 頁面加載時初始化
