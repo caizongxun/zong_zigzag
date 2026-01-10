@@ -56,7 +56,7 @@ class CompletePipeline:
     """
     
     def __init__(self, pairs=None, intervals=None, depth=12, deviation=0.8, 
-                 backstep=2, sample_size=1000):
+                 backstep=2, sample_size=1000, use_all_candles=False):
         """
         參數說明：
             pairs (list or str): 交易對，如 ['BTCUSDT', 'ETHUSDT']、'all' 訓練全部、'ALL' 訓練全部
@@ -64,7 +64,8 @@ class CompletePipeline:
             depth (int): ZigZag Depth 參數
             deviation (float): ZigZag Deviation 參數 (%)
             backstep (int): ZigZag Backstep 參數
-            sample_size (int): 使用的最近 N 條記錄數
+            sample_size (int): 使用的最近 N 條記錄數 (若 use_all_candles=True 則忽略)
+            use_all_candles (bool): 是否使用檔案中的所有 K 棒數據進行訓練
         """
         # 決定訓練的幣種
         if isinstance(pairs, str):
@@ -92,6 +93,7 @@ class CompletePipeline:
         self.deviation = deviation
         self.backstep = backstep
         self.sample_size = sample_size
+        self.use_all_candles = use_all_candles
         
         # 初始化輸出目錄
         os.makedirs('models', exist_ok=True)
@@ -131,9 +133,11 @@ class CompletePipeline:
             # 讀取 parquet 文件
             df = pd.read_parquet(local_path)
             
-            # 使用最近的樣本數
-            if len(df) > self.sample_size:
+            # 若使用全部 K 棒，則不進行抽樣
+            if not self.use_all_candles and len(df) > self.sample_size:
                 df = df.tail(self.sample_size).reset_index(drop=True)
+            else:
+                df = df.reset_index(drop=True)
             
             # 確保時間列格式
             if 'open_time' in df.columns:
@@ -141,7 +145,8 @@ class CompletePipeline:
             elif 'timestamp' not in df.columns:
                 df['timestamp'] = pd.date_range(end=datetime.now(), periods=len(df), freq=interval)
             
-            print(f"    成功下載 {len(df):,} 條記錄")
+            candles_info = "所有 K 棒" if self.use_all_candles else f"{self.sample_size} 個樣本"
+            print(f"    成功下載 {len(df):,} 條記錄 ({candles_info})")
             return df
         
         except Exception as e:
@@ -176,9 +181,11 @@ class CompletePipeline:
             if response.status_code == 200:
                 df = pd.read_parquet(BytesIO(response.content))
                 
-                # 使用最近的樣本數
-                if len(df) > self.sample_size:
+                # 若使用全部 K 棒，則不進行抽樣
+                if not self.use_all_candles and len(df) > self.sample_size:
                     df = df.tail(self.sample_size).reset_index(drop=True)
+                else:
+                    df = df.reset_index(drop=True)
                 
                 # 確保時間列格式
                 if 'open_time' in df.columns:
@@ -186,7 +193,8 @@ class CompletePipeline:
                 elif 'timestamp' not in df.columns:
                     df['timestamp'] = pd.date_range(end=datetime.now(), periods=len(df), freq=interval)
                 
-                print(f"    成功下載 {len(df):,} 條記錄")
+                candles_info = "所有 K 棒" if self.use_all_candles else f"{self.sample_size} 個樣本"
+                print(f"    成功下載 {len(df):,} 條記錄 ({candles_info})")
                 return df
             else:
                 print(f"    HTTP 狀態碼: {response.status_code}")
@@ -348,6 +356,8 @@ class CompletePipeline:
             'accuracy': xgb_acc,
             'f1_score': xgb_f1,
             'train_samples': len(X_train),
+            'test_samples': len(X_test),
+            'total_candles': len(df_features),
             'model_dir': model_dir
         }
     
@@ -469,6 +479,7 @@ class CompletePipeline:
             'deviation': self.deviation,
             'backstep': self.backstep,
             'sample_size': self.sample_size,
+            'use_all_candles': self.use_all_candles,
             'timestamp': timestamp
         }
         with open(f'{model_dir}/params.json', 'w') as f:
@@ -490,7 +501,12 @@ class CompletePipeline:
         print(f"  ZigZag Depth: {self.depth}")
         print(f"  ZigZag Deviation: {self.deviation}%")
         print(f"  ZigZag Backstep: {self.backstep}")
-        print(f"  樣本數: {self.sample_size}")
+        
+        if self.use_all_candles:
+            print(f"  K 棒: 使用檔案中的所有 K 棒")
+        else:
+            print(f"  K 棒: 使用最近 {self.sample_size} 個樣本")
+        
         print(f"  總模型數: {len(self.pairs) * len(self.intervals)}")
         print(f"  數據源: HuggingFace ({HF_REPO_ID})")
         print()
@@ -521,6 +537,9 @@ class CompletePipeline:
                     if result:
                         self.train_results.append(result)
                         print(f"\n  成功: {pair} {interval}")
+                        print(f"    K 棒總數: {result['total_candles']:,}")
+                        print(f"    訓練樣本: {result['train_samples']}")
+                        print(f"    測試樣本: {result['test_samples']}")
                         print(f"    模型位置: {result['model_dir']}")
                 
                 except Exception as e:
@@ -528,7 +547,7 @@ class CompletePipeline:
                     import traceback
                     traceback.print_exc()
         
-        # 統計汇總
+        # 統計彙總
         elapsed = (datetime.now() - start_time).total_seconds()
         
         print("\n" + "#"*70)
@@ -540,8 +559,8 @@ class CompletePipeline:
         
         if self.train_results:
             print(f"\n模型結果:")
-            print(f"{'Pair':<12} {'Interval':<8} {'Accuracy':<10} {'F1 Score':<10} {'Samples':<10}")
-            print("-" * 50)
+            print(f"{'Pair':<12} {'Interval':<8} {'Accuracy':<10} {'F1 Score':<10} {'Candles':<12}")
+            print("-" * 60)
             
             accuracies = []
             f1_scores = []
@@ -549,11 +568,11 @@ class CompletePipeline:
             for result in self.train_results:
                 print(f"{result['pair']:<12} {result['interval']:<8} "
                       f"{result['accuracy']:<10.4f} {result['f1_score']:<10.4f} "
-                      f"{result['train_samples']:<10}")
+                      f"{result['total_candles']:<12,d}")
                 accuracies.append(result['accuracy'])
                 f1_scores.append(result['f1_score'])
             
-            print("-" * 50)
+            print("-" * 60)
             avg_acc = np.mean(accuracies)
             avg_f1 = np.mean(f1_scores)
             max_acc = np.max(accuracies)
@@ -628,17 +647,23 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 示例：
-  # 單個幣種、單時間框架
-  python train_complete_pipeline.py --pair BTCUSDT --interval 15m --depth 12 --deviation 0.8 --backstep 2 --sample 200000
+  # 單個幣種、單時間框架、使用最近 200000 個 K 棒
+  python train_complete_pipeline.py --pair BTCUSDT --interval 15m --sample 200000
   
-  # 多個幣種
-  python train_complete_pipeline.py --pair BTCUSDT ETHUSDT BNBUSDT --interval 15m --depth 12 --deviation 0.8 --backstep 2 --sample 200000
+  # 單個幣種、單時間框架、使用全部 K 棒
+  python train_complete_pipeline.py --pair BTCUSDT --interval 15m --use-all-candles
   
-  # 所有 38 個幣種
-  python train_complete_pipeline.py --pair all --interval 15m --depth 12 --deviation 0.8 --backstep 2 --sample 200000
+  # 多個幣種、使用最近 200000 個 K 棒
+  python train_complete_pipeline.py --pair BTCUSDT ETHUSDT BNBUSDT --interval 15m --sample 200000
   
-  # 所有幣種 + 兩個時間框架
-  python train_complete_pipeline.py --pair all --interval 15m 1h --depth 12 --deviation 0.8 --backstep 2 --sample 200000
+  # 多個幣種、使用全部 K 棒
+  python train_complete_pipeline.py --pair BTCUSDT ETHUSDT --interval 15m --use-all-candles
+  
+  # 全部 38 個幣種、15m、使用全部 K 棒
+  python train_complete_pipeline.py --pair all --interval 15m --use-all-candles
+  
+  # 全部 38 個幣種、兩個時間框架、使用全部 K 棒
+  python train_complete_pipeline.py --pair all --interval 15m 1h --use-all-candles
         '''
     )
     
@@ -654,6 +679,8 @@ if __name__ == "__main__":
                         help='ZigZag Backstep 參數 (預設: 2)')
     parser.add_argument('--sample', type=int, default=200000,
                         help='使用的樣本數 (預設: 200000)')
+    parser.add_argument('--use-all-candles', action='store_true',
+                        help='使用檔案中的所有 K 棒進行訓練 (忽略 --sample 參數)')
     
     args = parser.parse_args()
     
@@ -678,7 +705,8 @@ if __name__ == "__main__":
         depth=args.depth,
         deviation=args.deviation,
         backstep=args.backstep,
-        sample_size=args.sample
+        sample_size=args.sample,
+        use_all_candles=args.use_all_candles
     )
     
     success = pipeline.run()
