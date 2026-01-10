@@ -212,6 +212,7 @@ class RealTimePredictorService:
             print(f"  交易對: {self.params.get('pair', 'N/A')}")
             print(f"  時間框架: {self.params.get('interval', 'N/A')}")
             print(f"  特徵數: {len(self.feature_names)}")
+            print(f"  特徵: {self.feature_names}")
             
             return True
         except Exception as e:
@@ -264,7 +265,7 @@ class RealTimePredictorService:
             df['close'] = df['close'].astype(float)
             df['volume'] = df['volume'].astype(float)
             
-            # 僅保留需要的欄
+            # 僅保留需要的欄位（不保留 Binance 的額外欄位）
             df = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
             
             return df
@@ -379,7 +380,7 @@ class RealTimePredictorService:
         提取 ZigZag 特徵
         基於最新的 K 棒數據
         
-        為保證輸出特徵數量為 11：
+        輸出特徵數量為 11 個:
         - open
         - high
         - low
@@ -505,26 +506,27 @@ class RealTimePredictorService:
                 'volume': float(current_candle['volume']) if pd.notna(current_candle['volume']) else 0
             }
             
-            # 準備特徵矩陣
-            feature_cols = [col for col in self.feature_names if col in df_features.columns]
+            # 提取 11 個特徵（訓練時使用的標準特徵集）
+            feature_cols = ['open', 'high', 'low', 'close', 'volume', 'zigzag', 'returns', 'volatility', 'momentum', 'rsi', 'macd']
             
-            # 檢查缺失特徵
-            missing_features = [f for f in self.feature_names if f not in df_features.columns]
-            if missing_features:
-                print(f"警告: 特徵 {missing_features} 不存在整個數據框架中")
+            # 驗證特徵是否存在
+            available_features = [col for col in feature_cols if col in df_features.columns]
+            if len(available_features) < len(feature_cols):
+                missing = [col for col in feature_cols if col not in available_features]
+                print(f"警告: 特徵 {missing} 不存在整個數據框架中")
             
-            # 按照預測標準提取
-            X_raw = df_features.iloc[-2:-1][feature_cols].values if len(df_features) >= 2 else df_features.iloc[-1:][feature_cols].values
+            # 按照預測標準提取（使用前一根）
+            X_raw = df_features.iloc[-2:-1][available_features].values if len(df_features) >= 2 else df_features.iloc[-1:][available_features].values
             
-            # 如果特徵數量不符，沒有適當的特徵就填 0
+            # 如果提取到的特徵數不符，進行補齊
             if X_raw.shape[1] != len(self.feature_names):
                 print(f"特徵數量不匹配: {X_raw.shape[1]} vs {len(self.feature_names)}")
                 
-                # 建策整個整物特徵矩陣，沒有的就填 0
+                # 建立完整的特徵矩陣，沒有的就填 0
                 X_padded = np.zeros((1, len(self.feature_names)))
                 for i, feat in enumerate(self.feature_names):
-                    if feat in feature_cols:
-                        idx = feature_cols.index(feat)
+                    if feat in available_features:
+                        idx = available_features.index(feat)
                         X_padded[0, i] = X_raw[0, idx]
                 X = X_padded
             else:
@@ -713,6 +715,7 @@ def load_model():
                 'interval': interval,
                 'depth': predictor_service.params.get('depth'),
                 'deviation': predictor_service.params.get('deviation'),
+                'features': predictor_service.feature_names,
                 'update_interval': 1
             }
         })
@@ -780,6 +783,7 @@ def get_config():
                 'interval': predictor_service.current_interval,
                 'depth': predictor_service.params.get('depth', 12),
                 'deviation': predictor_service.params.get('deviation', 0.8),
+                'features': predictor_service.feature_names,
                 'num_features': len(predictor_service.feature_names) if predictor_service.feature_names else 0,
                 'auto_update_enabled': predictor_service.is_running,
                 'update_interval': 1
@@ -812,7 +816,8 @@ def health_check():
         'yfinance_available': YFINANCE_AVAILABLE,
         'current_pair': predictor_service.current_pair,
         'current_interval': predictor_service.current_interval,
-        'auto_update_enabled': predictor_service.is_running
+        'auto_update_enabled': predictor_service.is_running,
+        'feature_count': len(predictor_service.feature_names) if predictor_service.feature_names else 0
     })
 
 
@@ -852,9 +857,10 @@ if __name__ == '__main__':
     print("API: http://localhost:5000/api/latest")
     print("WebSocket: ws://localhost:5000/socket.io")
     print("特徵: 每秒自動更新，使用前一根K棒進行預測")
-    print("信號: 0=HH, 1=HL, 2=LH, 3=LL, HOLD=無信號")
+    print("信號: HOLD, HH, HL, LH, LL")
     print("模式: Binance API 優先, yfinance 備用")
     print("支持: 38 個幣種 + 2 個時間框架")
+    print("特徵: 11 個 (open/high/low/close/volume/zigzag/returns/volatility/momentum/rsi/macd)")
     print("="*60 + "\n")
     
     try:
