@@ -1,11 +1,6 @@
 #!/usr/bin/env python
 
-import sys
-from pathlib import Path
 import logging
-
-sys.path.insert(0, str(Path(__file__).parent))
-
 from label_generator import LabelGenerator
 from label_statistics import LabelStatistics
 
@@ -18,19 +13,25 @@ def main():
     print("v1.2 Label System Test - BTC 15m")
     print("="*70)
     
-    config_path = Path(__file__).parent / "config.yaml"
+    config_path = "config.yaml"
     
-    if not config_path.exists():
+    try:
+        with open(config_path) as f:
+            pass
+    except FileNotFoundError:
         logger.error(f"Config file not found at {config_path}")
+        logger.error("Make sure you're in the v1.2_label_system directory")
         return
     
     logger.info(f"Using config: {config_path}")
     
     try:
-        generator = LabelGenerator(str(config_path))
+        generator = LabelGenerator(config_path)
         logger.info("LabelGenerator initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize LabelGenerator: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return
     
     logger.info("\nGenerating labels for BTCUSDT 15m...")
@@ -152,12 +153,14 @@ def main():
         report = LabelStatistics.generate_full_report(df, "BTCUSDT", "15m")
         LabelStatistics.print_report(report)
         
-        report_path = Path("./output/BTCUSDT_15m_report.json")
-        Path("./output").mkdir(exist_ok=True)
-        LabelStatistics.save_report(report, str(report_path))
-        logger.info(f"Report saved to {report_path}")
+        import os
+        os.makedirs("./output", exist_ok=True)
+        LabelStatistics.save_report(report, "./output/BTCUSDT_15m_report.json")
+        logger.info(f"Report saved to ./output/BTCUSDT_15m_report.json")
     except Exception as e:
         logger.error(f"Failed to generate report: {str(e)}")
+        import traceback
+        traceback.print_exc()
     
     print("\n" + "="*70)
     print("Test completed successfully!")
