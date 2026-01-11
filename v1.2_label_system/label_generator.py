@@ -5,9 +5,14 @@ from typing import Optional, Dict
 import logging
 from datetime import datetime
 
-from .data_loader import DataLoader
-from .feature_engineering import FeatureEngineer
-from .entry_validator import EntryValidator
+try:
+    from data_loader import DataLoader
+    from feature_engineering import FeatureEngineer
+    from entry_validator import EntryValidator
+except ImportError:
+    from .data_loader import DataLoader
+    from .feature_engineering import FeatureEngineer
+    from .entry_validator import EntryValidator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
