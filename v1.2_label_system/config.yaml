@@ -4,21 +4,21 @@ huggingface:
   cache_dir: .cache/hf_datasets
 
 entry_validation:
-  lookahead_bars: 20              # K棒数量用来评估entry是否成功
-  profit_threshold: 1.5           # 利潤需要勝風險多少倍
-  fib_proximity: 0.005            # 0.5% - Fibonacci接近度(更严格)
-  bb_proximity: 0.005             # 0.5% - Bollinger Band接近度(更严格)
+  lookahead_bars: 20
+  profit_threshold: 1.5
+  fib_proximity: 0.005
+  bb_proximity: 0.005
 
 indicators:
-  bollinger_period: 20            # SMA週期
-  bollinger_std: 2                # 標準差倍數
-  atr_period: 14                  # ATR週期
-  zigzag_threshold: 0.5           # ZigZag閾值(從1.0改小以捕捉更多swing)
+  bollinger_period: 20
+  bollinger_std: 2
+  atr_period: 14
+  zigzag_threshold: 0.5
   fibonacci_levels: [0.236, 0.382, 0.5, 0.618, 0.705, 0.786]
 
 processing:
-  batch_size: 1000                # 批量處理大小
-  n_workers: 4                    # 並行進程數
+  batch_size: 1000
+  n_workers: 4
 
 symbols:
   - AAVEUSDT
