@@ -2,8 +2,7 @@
 # Python 3.8+
 
 # 深度學習
- torch>=2.0.0
-type]>=2.0.0
+torch>=2.0.0
 
 # 機器學習
 xgboost>=1.7.0
