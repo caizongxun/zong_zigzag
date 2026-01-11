@@ -1,0 +1,74 @@
+huggingface:
+  repo_id: "zongowo111/v2-crypto-ohlcv-data"
+  hf_root: "klines"
+  use_cache: true
+  cache_dir: ".cache/hf_datasets"
+
+entry_validation:
+  lookahead_bars: 20
+  profit_threshold: 1.5
+  fib_proximity: 0.01
+  bb_proximity: 0.01
+  min_volume_threshold: 1000
+
+quality_scoring:
+  max_profit_weight: 40
+  max_drawdown_weight: 30
+  rrr_weight: 20
+  win_rate_weight: 10
+
+indicators:
+  fibonacci_levels: [0.236, 0.382, 0.5, 0.618, 0.705, 0.786]
+  bollinger_period: 20
+  bollinger_std: 2
+  atr_period: 14
+  zigzag_threshold: 1.0
+
+symbols:
+  - AAVEUSDT
+  - ADAUSDT
+  - ALGOUSDT
+  - ARBUSDT
+  - ATOMUSDT
+  - AVAXUSDT
+  - BALUSDT
+  - BATUSDT
+  - BCHUSDT
+  - BNBUSDT
+  - BTCUSDT
+  - COMPUSDT
+  - CRVUSDT
+  - DOGEUSDT
+  - DOTUSDT
+  - ENJUSDT
+  - ENSUSDT
+  - ETCUSDT
+  - ETHUSDT
+  - FILUSDT
+  - GALAUSDT
+  - GRTUSDT
+  - IMXUSDT
+  - KAVAUSDT
+  - LINKUSDT
+  - LTCUSDT
+  - MANAUSDT
+  - MATICUSDT
+  - MKRUSDT
+  - NEARUSDT
+  - OPUSDT
+  - SANDUSDT
+  - SNXUSDT
+  - SOLUSDT
+  - SPELLUSDT
+  - UNIUSDT
+  - XRPUSDT
+  - ZRXUSDT
+
+timeframes:
+  - 15m
+  - 1h
+
+processing:
+  batch_size: 1000
+  n_workers: 4
+  verbose: true
