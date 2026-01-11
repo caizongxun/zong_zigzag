@@ -110,6 +110,17 @@ def main():
     
     features = feature_builder.build_feature_matrix(df_clean)
     print(f"✓ 特徵構建完成: {features.shape[1]} 個特徵")
+    print(f"✓ 最終走数: {features.shape[0]} 行")
+    
+    # 检查是否有NaN
+    if features.isnull().any().any():
+        print("警告: 特徵中仍有 NaN 值。自動移除...")
+        features = features.dropna()
+        print(f"✓ 之上移除 NaN 后: {features.shape[0]} 行")
+    
+    if features.empty:
+        print("✗ 鄙: 特徵整個沒有可用數據")
+        return
     
     # ========== 第五步：準備訓練數據 ==========
     print("\n[步驟 5/7] 準備訓練數據...")
@@ -119,8 +130,8 @@ def main():
     train_size = int(len(features) * 0.8)
     X_train = features.iloc[:train_size].values
     X_test = features.iloc[train_size:].values
-    y_train = df_clean['close'].iloc[:train_size].values
-    y_test = df_clean['close'].iloc[train_size:].values
+    y_train = df_clean['close'].iloc[features.index[:train_size]].values
+    y_test = df_clean['close'].iloc[features.index[train_size:]].values
     
     print(f"✓ 訓練數據: {X_train.shape}")
     print(f"✓ 測試數據: {X_test.shape}")
@@ -136,14 +147,24 @@ def main():
     print(f"✓ 測試序列: {X_test_seq.shape}")
     
     # 數據標準化（關鍵！）
-    print("\n正在標準化數據...")
+    print("\n正在標準化数据...")
+    
+    # 曆前检查是否有極端值
+    print(f"X_train_seq 打印 stats: min={X_train_seq.min():.6f}, max={X_train_seq.max():.6f}")
+    
     scaler = StandardScaler()
     
+    # 展平批遣敳正見平化
     X_train_flat = X_train_seq.reshape(-1, X_train_seq.shape[-1])
+    
+    # 佒直卻阴觸箓子的 NaN、inf 等不合法值
+    X_train_flat = np.nan_to_num(X_train_flat, nan=0.0, posinf=1e6, neginf=-1e6)
+    
     X_train_flat_scaled = scaler.fit_transform(X_train_flat)
     X_train_seq_scaled = X_train_flat_scaled.reshape(X_train_seq.shape)
     
     X_test_flat = X_test_seq.reshape(-1, X_test_seq.shape[-1])
+    X_test_flat = np.nan_to_num(X_test_flat, nan=0.0, posinf=1e6, neginf=-1e6)
     X_test_flat_scaled = scaler.transform(X_test_flat)
     X_test_seq_scaled = X_test_flat_scaled.reshape(X_test_seq.shape)
     
@@ -154,6 +175,8 @@ def main():
     print("✓ 數據標準化完成")
     print(f"  - X 均值: {X_train_seq_scaled.mean():.6f}")
     print(f"  - X 方差: {X_train_seq_scaled.std():.6f}")
+    print(f"  - 是否有 NaN: {np.isnan(X_train_seq_scaled).any()}")
+    print(f"  - 是否有 inf: {np.isinf(X_train_seq_scaled).any()}")
     
     # 轉換為 PyTorch 張量
     X_train_tensor = torch.FloatTensor(X_train_seq_scaled)
@@ -184,7 +207,7 @@ def main():
         dropout=0.2
     ).to(device)
     
-    print(f"✓ LSTM 模型已初始化 (輸入維度: {input_dim})")
+    print(f"✓ LSTM 模型已初始化 (輸入竖度: {input_dim})")
     
     # 損失函數和優化器
     criterion = torch.nn.HuberLoss(delta=1.0)
