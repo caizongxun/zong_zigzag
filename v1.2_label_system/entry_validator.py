@@ -144,21 +144,17 @@ class EntryValidator:
         if entry_idx >= len(df) - self.lookahead_bars:
             return df.iloc[entry_idx]["close"], 0
         
+        entry_price = df.iloc[entry_idx]["close"]
         future_prices = df.iloc[entry_idx:entry_idx + self.lookahead_bars]["close"]
         
         if direction == "long":
-            optimal_price = future_prices.min()
+            max_price = future_prices.max()
+            optimal_return = (max_price - entry_price) / entry_price
         else:
-            optimal_price = future_prices.max()
+            min_price = future_prices.min()
+            optimal_return = (entry_price - min_price) / entry_price
         
-        entry_price = df.iloc[entry_idx]["close"]
-        
-        if direction == "long":
-            return_pct = (optimal_price - entry_price) / entry_price
-        else:
-            return_pct = (entry_price - optimal_price) / entry_price
-        
-        return optimal_price, return_pct
+        return max_price if direction == "long" else min_price, optimal_return
     
     def generate_all_labels(
         self,
