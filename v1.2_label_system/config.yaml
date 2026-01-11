@@ -6,14 +6,14 @@ huggingface:
 entry_validation:
   lookahead_bars: 20
   profit_threshold: 1.5
-  fib_proximity: 0.005
-  bb_proximity: 0.005
+  fib_proximity: 0.002
+  bb_proximity: 0.002
 
 indicators:
   bollinger_period: 20
   bollinger_std: 2
   atr_period: 14
-  zigzag_threshold: 0.5
+  zigzag_threshold: 0.3
   fibonacci_levels: [0.236, 0.382, 0.5, 0.618, 0.705, 0.786]
 
 processing:
