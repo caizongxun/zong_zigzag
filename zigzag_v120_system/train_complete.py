@@ -190,7 +190,7 @@ def main():
     criterion = torch.nn.HuberLoss(delta=1.0)
     optimizer = optim.AdamW(lstm_model.parameters(), lr=0.001, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=2, verbose=False
+        optimizer, mode='min', factor=0.5, patience=2
     )
     
     print("✓ 優化器: AdamW")
